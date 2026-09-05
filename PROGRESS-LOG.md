@@ -8,7 +8,7 @@ Shared status across the three repos. Two people, two halves, one file.
 
 Keep this file to **what the other person needs**: anything crossing the repo boundary, any decision that changes the contract, anything that unblocks them. Work only one repo cares about belongs in that repo's `CLAUDE.md`, not here. Append; never rewrite someone else's entry.
 
-Entries are tagged by **side**, not by person. Suparno is mostly on the frontend and Kai is mostly on the backend, but either of us can work on either, and the log should show what actually happened rather than who usually does what. Sign your name so the other one knows who to ask.
+Entries are tagged by **side**, not by person. Suparno is mostly on the frontend and Priyanshu is mostly on the backend, but either of us can work on either, and the log should show what actually happened rather than who usually does what. Sign your name so the other one knows who to ask.
 
 Log entry template, copy this:
 
@@ -37,9 +37,9 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** scaffolded, no running code yet.
+**Stage:** scaffolded, no running code yet. Deps, config and the database are in place.
 **Deployed:** no.
-**Next:** Express + Drizzle + Postgres up, Hedera client, Mirror Node helper, create the three HCS topics.
+**Next:** Express skeleton, Hedera client, Mirror Node helper, create the three HCS topics.
 
 ---
 
@@ -70,6 +70,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Agent watcher | Mirror Node polling, 5s, saved cursor | Restart-safe and easy to demo. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
+| Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
 
 ### Frontend, where it reaches the contract
 
@@ -105,6 +106,10 @@ PATCH /api/reviews/:id
 POST  /api/agents                returns a wallet address to fund
 GET   /api/agents/:id
 POST  /api/reports
+GET   /api/invites/:id           public, for the emailed link
+POST  /api/invites/:id/accept
+GET   /api/notifications
+POST  /api/notifications/:id/read
 ```
 
 Four things that affect client code:
@@ -141,6 +146,14 @@ What the client already assumes, so the API doesn't have to guess:
 | Studio creation | `POST /api/studios` returning the created studio with its id, so the client can route to `/studio/:id`. |
 
 Two things still open on the download path: whether `GET /api/games/:id/download` returns a zip stream or an IPFS CID the client fetches itself (a CID needs CORS on the gateway), and where a running build gets served from, given it can't be the app's origin (see Decisions).
+
+**Resolved, backend side, 2026-09-05:**
+
+- **`/invite/:id`** — `GET /api/invites/:id` (public) + `POST /api/invites/:id/accept` (auth). Accept sets `StudioMember.user_id` and stamps `accepted_at`. No decline endpoint on purpose — not accepting *is* the decline, and it's reversible by opening the link again later.
+- **Notifications** — `GET /api/notifications` + `POST /api/notifications/:id/read`. Plain polling against a Postgres table, not SSE and not derived live from HCS. Whatever handler causes the event writes a row at that point (a sale writes to the seller, an invite to the invitee, the agent watcher to the buyer when it fires, a publish to every studio member).
+- **Publish media step** — `POST /api/games` takes `build` (zip), `media` (up to 8 image/video files), and a `coverMediaIndex` field marking which one is the star. No `coverMediaIndex` falls back to the generated cover.
+- **Studio creation** — `POST /api/studios` takes an optional `ensSubname` and returns the created studio with its `id`. Live availability while typing: `GET /api/studios/ens-availability?name=`, checked against Sepolia.
+- **Download path** — `GET /api/games/:id/download` returns JSON with a `playUrl` that's a direct `ipfs.io/ipfs/<cid>/index.html` URL, not a zip stream. That answers the origin question too: `ipfs.io` is already a different origin from the app, so `allow-same-origin` on that iframe is safe by construction, the same way your preview origin is. The self-hosted second origin is only needed for the pre-publish local preview — the real, purchased build doesn't need one, it's already off our origin.
 
 ---
 
@@ -188,6 +201,12 @@ Also worth knowing before the API lands: a few screens exist with no endpoint be
 
 **Next:** a per-screen audit pass, then integration as a deliberate phase in this order: Privy, the API, then x402.
 
-### 2026-09-05 · Backend · Kai
+### 2026-09-05 · Backend · Priyanshu
 
-Split into three repos. Settled the open stack decisions (see table above) by checking the actual packages rather than the docs — the SDK one turned out to be forced by an x402 dependency, not a preference. Wrote the API contract and setup notes. Added a `.gitignore` to CGS-server
+**Shipped:** repo split into three. `.gitignore` added to CGS-server, which had been pushed without one. Deps installed, `tsconfig.json` and `drizzle.config.ts` set up, database on Neon, `.env` populated. Caught and fixed one bad dependency (`express-rate-limiter`, an abandoned package, swapped for the real `express-rate-limit`).
+
+**Changes the contract:** invites and notifications added — both already exist on your side and weren't in the original plan. Answered everything in your needs table above; see the resolved list.
+
+**Needs from you:** nothing blocking right now.
+
+**Next:** Stage 1 — Express skeleton, Hedera client, Mirror Node helper, create the three HCS topics.
