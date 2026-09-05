@@ -57,6 +57,7 @@ GET    /api/games/:idOrSlug             detail + studio + splits + media (+ owne
 POST   /api/games                       upload, multipart — see §5
 POST   /api/games/:id/publish           locks splits, mints the token, writes the HCS listing
 GET    /api/games/:id/download          x402-gated — see §4
+POST   /api/games/:id/pay               signs + settles payment server-side — see §4
 GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated
@@ -117,11 +118,16 @@ builds, only for the pre-publish local preview.
                 "extra": { "feePayer": "0.0.7162784" } }] }
 ```
 
-You do **not** build a Hedera transaction from this. Ask for the helper — the
-signing bridge lives on the backend because it needs Privy's server-side raw
-signing primitive, which the browser SDK doesn't expose. The shape you'll call
-is one function that takes the game id and resolves to the same
-`{ playUrl, tokenId, keyStatus }` body as the `200` case.
+You do **not** build a Hedera transaction from this. Call the helper instead:
+
+```
+POST /api/games/:id/pay      requireAuth, no body
+```
+
+Signs the payment with the logged-in buyer's own Privy wallet server-side (the
+browser can't hold a signing key) and returns the same
+`{ playUrl, tokenId, keyStatus }` shape as the `200` case above. Use it whenever
+`GET /:id/download` came back `402` and the buyer confirms they want to pay.
 
 **`keyStatus: "pending"`** on a successful purchase is deliberate and it changes
 your UI. Payment has settled and the buyer is entitled to the game *right now* —

@@ -37,11 +37,11 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** Stages 1–3 done. Foundations, the publish pipeline, and the x402 purchase path are all built and tested against live Neon, Hedera testnet and the Blocky402 facilitator. No route returns `501`.
-**Working end to end:** a real buyer pays through x402, the payment settles through Blocky402, the GameKey NFT lands in their account, the split goes out atomically, and the sale is logged to HCS. Verified against the Mirror Node at every step, not from SDK responses.
+**Stage:** All five stages done. Foundations, publish, purchase, splits/audit, and the wishlist agent — all built and verified on live Neon, Hedera testnet and Blocky402. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. Separately, and just as real: an agent with its own wallet and its own on-chain identity watches the public listings topic, sees a game publish, and buys it with no human present — verified by checking its balance and its GameKey on the Mirror Node afterward, not by trusting our own status field.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
-**Next:** Stage 5, the wishlist agent (identity anchor + the Mirror Node watcher). Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
+**Next:** deployment (nothing left to build that blocks it), or reviews/ENS/moderation (Stages 6–8, independent of each other). Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -79,6 +79,10 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | x402 wiring | `x402ResourceServer` called directly, not `paymentMiddleware` | The route needs two bypass branches (free game, already owns) that depend on the authenticated caller, which the middleware's hook can't see. Same official library either way. |
 | Payment signing | Backend, via Privy's `secp256k1_sign` | Privy's browser SDK doesn't expose raw-hash signing. Same bridge serves the buyer and the agent, so the agent fires the identical path a person does. |
 | Frontend integration | Frontend owns it; backend provides the x402 helper | See [INTEGRATION.md](INTEGRATION.md). Privy in the browser is frontend too. |
+| Sales audit trail | A `sales` table, one row per settled purchase | Nowhere recorded a failed split distribution before this, and nothing could retry one. `npm run splits:retry` retries every `failed` row. |
+| Agent identity (HCS-14) | Hand-implemented, not `@hashgraphonline/standards-sdk` | The install never finished in 4+ minutes. The AID variant's own spec allows offline derivation from public inputs — no SDK needed, just SHA-384 + Base58. See `docs/stage-5.md` §1. |
+| Agent + buyer payment signing | One shared function, `payForGame()` | Both consume our own x402 route as a real client would; the agent uses its own wallet, a logged-in buyer's `/pay` call uses theirs. Same code path on purpose. |
+| Privy wallet public key | Derived from a real signature, not read from the API | `Wallet.public_key` is empty in practice on both `create()` and `get()`, despite the type marking it optional. A `secp256k1_sign` response carries a recovery byte, which makes the key recoverable from one real signature. Verified across four trials. |
 
 ### Frontend, where it reaches the contract
 
@@ -111,6 +115,7 @@ POST  /api/studios/:id/members   invite by email
 POST  /api/games                 upload (multipart) — fails MODERATION_BLOCKED until a CSAM provider is picked
 POST  /api/games/:id/publish     locks splits, mints the token, writes the HCS listing
 GET   /api/games/:id/download    x402-gated — the one non-REST call
+POST  /api/games/:id/pay         signs + settles the payment server-side, for a logged-in buyer
 GET   /api/games/:id/owned
 GET   /api/games/:id/reviews
 POST  /api/games/:id/reviews     ownership-gated
@@ -220,3 +225,17 @@ Two things that cost time and are worth knowing: `payTo` was still the `0.0.xxxx
 **Needs from you:** nothing blocking.
 
 **Next:** Stage 5, the wishlist agent.
+
+### 2026-09-06 · Backend · Priyanshu
+
+**Shipped:** Stage 4 (a real `sales` table + `npm run splits:retry` — a failed split distribution used to just log an error and vanish; now it's recorded and retryable). Then Stage 5, the wishlist agent, fully working: its own Privy wallet, an HCS-14 identity anchor naming the buyer as funding principal, and a watcher that polls the public listings topic through the Mirror Node and fires the same purchase path a person's checkout does.
+
+**Changes the contract:** `POST /api/games/:id/pay` — the helper I told you to ask for. Signs and settles a purchase with the logged-in buyer's own wallet server-side, since the browser can't hold a signing key. Same shape as the `200` from `/download`.
+
+Three real bugs, all caught by testing the actual path rather than trusting a type or a doc: Privy's `Wallet.public_key` comes back empty in practice (fixed by deriving it from a real signature — its `v` byte makes the key mathematically recoverable, verified across four trials against real wallet addresses); the Mirror Node flat-out rejects `sequencenumber=gt:0` (`gte:1` works, `gt:0` is a `400`) — meaning every new agent silently stalled on its very first tick before this was found; and `@hashgraphonline/standards-sdk`'s install never finished in 4+ minutes, so HCS-14's AID format is hand-implemented directly from its own published spec instead (SHA-384 + Base58 over six canonical fields — the format explicitly allows offline derivation, no SDK needed).
+
+**Tested for real, verified on the Mirror Node, not from our own status field:** created a game as a draft, created an agent watching it, funded the agent with real HBAR, watched it anchor its identity and move to `watching` on its own — then published the game for the first time *after* the agent was already watching. Within one tick it moved `watching → fired` with no script telling it to buy. Confirmed after: its balance dropped by exactly the game's price, its account holds the GameKey NFT, and the split distributed for real.
+
+**Needs from you:** nothing blocking.
+
+**Next:** deployment, so integration doesn't need a local backend on your machine. Otherwise Stages 6–8 (reviews' live ownership check, ENS subnames, moderation actions) — independent of each other, pick any order.
