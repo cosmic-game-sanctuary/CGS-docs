@@ -37,9 +37,11 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** scaffolded, no running code yet. Deps, config and the database are in place.
+**Stage:** Stages 1–3 done. Foundations, the publish pipeline, and the x402 purchase path are all built and tested against live Neon, Hedera testnet and the Blocky402 facilitator. No route returns `501`.
+**Working end to end:** a real buyer pays through x402, the payment settles through Blocky402, the GameKey NFT lands in their account, the split goes out atomically, and the sale is logged to HCS. Verified against the Mirror Node at every step, not from SDK responses.
 **Deployed:** no.
-**Next:** Express skeleton, Hedera client, Mirror Node helper, create the three HCS topics.
+**Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
+**Next:** Stage 5, the wishlist agent (identity anchor + the Mirror Node watcher). Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -49,7 +51,7 @@ Only things stopping work right now.
 
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
-| — | — | — | — |
+| Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 
 ---
 
@@ -71,6 +73,12 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
+| IPFS upload | Official `pinata` SDK | Real, typed, matches the v3 Files API. Directory upload (`fileArray`) keeps `index.html` at the CID root. |
+| CSAM check timing | At upload, not at publish | Nothing reaches IPFS — public, essentially permanent — without passing first. See `docs/stage-2.md` §4. |
+| CSAM provider | None chosen yet, fails closed | No vendor decision exists and no free instant option does either. `runProvider()` in `services/moderation/csam.ts` is the single seam a real one drops into. |
+| x402 wiring | `x402ResourceServer` called directly, not `paymentMiddleware` | The route needs two bypass branches (free game, already owns) that depend on the authenticated caller, which the middleware's hook can't see. Same official library either way. |
+| Payment signing | Backend, via Privy's `secp256k1_sign` | Privy's browser SDK doesn't expose raw-hash signing. Same bridge serves the buyer and the agent, so the agent fires the identical path a person does. |
+| Frontend integration | Frontend owns it; backend provides the x402 helper | See [INTEGRATION.md](INTEGRATION.md). Privy in the browser is frontend too. |
 
 ### Frontend, where it reaches the contract
 
@@ -89,16 +97,20 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 
 ### For the frontend
 
-Endpoints:
+**Full integration guide, including who does what and the suggested order: [INTEGRATION.md](INTEGRATION.md).** Read that one before starting; this is the summary.
+
+Every endpoint below is live and tested against real Neon + Hedera testnet. Nothing returns `501` any more.
 
 ```
 GET   /api/games                 catalog: search, tag, sort, freeOnly, cursor
 GET   /api/games/:idOrSlug
 POST  /api/studios
+GET   /api/studios/ens-availability   ?name= — DB-only check for now, not chain-verified
+GET   /api/studios/:idOrSlug
 POST  /api/studios/:id/members   invite by email
-POST  /api/games                 upload (multipart)
-POST  /api/games/:id/publish     locks splits, writes the HCS listing
-GET   /api/games/:id/download    x402-gated
+POST  /api/games                 upload (multipart) — fails MODERATION_BLOCKED until a CSAM provider is picked
+POST  /api/games/:id/publish     locks splits, mints the token, writes the HCS listing
+GET   /api/games/:id/download    x402-gated — the one non-REST call
 GET   /api/games/:id/owned
 GET   /api/games/:id/reviews
 POST  /api/games/:id/reviews     ownership-gated
@@ -112,16 +124,17 @@ GET   /api/notifications
 POST  /api/notifications/:id/read
 ```
 
-Four things that affect client code:
+Five things that affect client code:
 
 - Auth is `Authorization: Bearer <privy access token>`. No cookie, so no CSRF handling.
 - Catalog endpoints work signed out. They add an `owned` flag when a token is present. Don't gate browsing behind login.
-- Prices come as `priceUsd` for display and `priceUnits` (integer, 6dp) for math. Don't do money math on the float.
+- Prices come as `priceUsd` for display and `priceUnits` (integer) for math. Don't do money math on the float.
 - Never hardcode `payTo`, `feePayer`, or `asset`. All three come back in the 402 response.
+- **`keyStatus: "pending"` means boot the game now.** Payment has settled; the GameKey mints in the background. Don't block the player on it — that would put ~6s of chain calls in front of the instant-play moment.
 
 `Game`, `Studio`, `Review` and `SplitMember` match your `src/mocks/types.ts` — the backend model was extended to fit those rather than the other way round. `coverSeed` stays alongside a real `coverCid` so the placeholder art keeps working.
 
-Errors are always `{ error: { code, message, details? } }`. Codes worth handling: `UNAUTHENTICATED`, `WALLET_NOT_FUNDED`, `NOT_OWNER`, `GAME_NOT_PUBLISHED`, `VALIDATION_FAILED`, `RATE_LIMITED`.
+Errors are always `{ error: { code, message, details? } }`. Codes worth handling: `UNAUTHENTICATED`, `WALLET_NOT_FUNDED`, `NOT_OWNER`, `GAME_NOT_PUBLISHED`, `MODERATION_BLOCKED`, `VALIDATION_FAILED`, `RATE_LIMITED`.
 
 ### For the backend
 
@@ -135,25 +148,14 @@ What the client already assumes, so the API doesn't have to guess:
 - **Nothing persists.** Publishing pushes into an in-memory catalog that resets on reload. That's deliberate for now.
 - Integration seams are marked `TODO(integration)` in the client. Grep finds all of them.
 
-**Screens that exist with no endpoint yet.** Not urgent, but they'll need one before integration:
+**Everything you flagged as missing an endpoint is answered now:**
 
-| Screen | Needs |
-|---|---|
-| `/invite/:id` | Accept and decline. What's in the token, and whether the handle is set at accept time. |
-| Notifications inbox | Sales, invites, agent buys, publishes. Poll, SSE, or derived client-side from the HCS topic. |
-| Publish, media step | Several screenshots and clips plus a starred cover, not one image. Field names and limits on `POST /api/games`. |
-| Studio creation | Live ENS subname availability while the dev types. An endpoint, or a direct chain read from the client. |
-| Studio creation | `POST /api/studios` returning the created studio with its id, so the client can route to `/studio/:id`. |
-
-Two things still open on the download path: whether `GET /api/games/:id/download` returns a zip stream or an IPFS CID the client fetches itself (a CID needs CORS on the gateway), and where a running build gets served from, given it can't be the app's origin (see Decisions).
-
-**Resolved, backend side, 2026-09-05:**
-
-- **`/invite/:id`** — `GET /api/invites/:id` (public) + `POST /api/invites/:id/accept` (auth). Accept sets `StudioMember.user_id` and stamps `accepted_at`. No decline endpoint on purpose — not accepting *is* the decline, and it's reversible by opening the link again later.
-- **Notifications** — `GET /api/notifications` + `POST /api/notifications/:id/read`. Plain polling against a Postgres table, not SSE and not derived live from HCS. Whatever handler causes the event writes a row at that point (a sale writes to the seller, an invite to the invitee, the agent watcher to the buyer when it fires, a publish to every studio member).
-- **Publish media step** — `POST /api/games` takes `build` (zip), `media` (up to 8 image/video files), and a `coverMediaIndex` field marking which one is the star. No `coverMediaIndex` falls back to the generated cover.
-- **Studio creation** — `POST /api/studios` takes an optional `ensSubname` and returns the created studio with its `id`. Live availability while typing: `GET /api/studios/ens-availability?name=`, checked against Sepolia.
-- **Download path** — `GET /api/games/:id/download` returns JSON with a `playUrl` that's a direct `ipfs.io/ipfs/<cid>/index.html` URL, not a zip stream. That answers the origin question too: `ipfs.io` is already a different origin from the app, so `allow-same-origin` on that iframe is safe by construction, the same way your preview origin is. The self-hosted second origin is only needed for the pre-publish local preview — the real, purchased build doesn't need one, it's already off our origin.
+- **`/invite/:id`** — `GET /api/invites/:id` (public) + `POST /api/invites/:id/accept` (auth). Accept sets `user_id` and `accepted_at`. No decline endpoint — not accepting *is* the decline, reversible by opening the link again.
+- **Notifications** — `GET /api/notifications` + `POST /api/notifications/:id/read`. Plain polling, not SSE, not derived from HCS. Written by whichever handler causes the event — invite *accept* notifies the studio owner (the invitee has no account row to notify until they accept).
+- **Publish media** — `POST /api/games` takes `build`, `media` (up to 8 files), `coverMediaIndex` marking the star. No index falls back to the generated cover.
+- **Studio creation** — returns the created studio with its `id`. ENS availability is real today but DB-only, not chain-verified — see the endpoint list above.
+- **Download path** — built and tested. `playUrl` is a direct `ipfs.io/ipfs/<cid>/index.html` URL, not a zip stream. That answers the origin question: `ipfs.io` is already a different origin from the app, so `allow-same-origin` on that iframe is safe by construction — **your self-hosted second origin is only needed for the pre-publish local preview**, not for purchased builds.
+- **The x402 helper** — the signing bridge lives on the backend, because it needs Privy's server-side raw-signing primitive that the browser SDK doesn't expose. Ask for it when you get to checkout; don't build Hedera transactions in the browser.
 
 ---
 
@@ -203,10 +205,18 @@ Also worth knowing before the API lands: a few screens exist with no endpoint be
 
 ### 2026-09-05 · Backend · Priyanshu
 
-**Shipped:** repo split into three. `.gitignore` added to CGS-server, which had been pushed without one. Deps installed, `tsconfig.json` and `drizzle.config.ts` set up, database on Neon, `.env` populated. Caught and fixed one bad dependency (`express-rate-limiter`, an abandoned package, swapped for the real `express-rate-limit`).
+**Shipped:** repo split into three, `.gitignore` fixed on CGS-server. Then Stage 1 for real: Express app, auth (Privy access tokens, no sessions), all 11 tables on Neon, and every route that doesn't need Stage 2+ chain work — catalog, studio create/detail/invite, invites, notifications, reviews, reports, agent creation. Hedera client + Mirror Node helper are real. Tested against the live database and a running server, not mocked — inserted and read back real rows, hit the running app with `curl` for the catalog, filters, 404s, and auth rejection.
 
-**Changes the contract:** invites and notifications added — both already exist on your side and weren't in the original plan. Answered everything in your needs table above; see the resolved list.
+**Changes the contract:** invites and notifications added — both already existed on your side. Answered everything in your needs table; see the resolved list above. Nothing returns `501` any more, so integration is unblocked.
 
-**Needs from you:** nothing blocking right now.
+Fixed the operator key (it was for a different account than the one configured — caught by deriving the public key and diffing it against the Mirror Node) and hit Stage 1's real done condition: a topic message round-tripped through the Mirror Node.
 
-**Next:** Stage 1 — Express skeleton, Hedera client, Mirror Node helper, create the three HCS topics.
+Then Stage 2: upload really unzips the build, pins it to Pinata as a directory, and publish creates a real HTS token — verified on the Mirror Node that it carries no wipe, freeze, pause or admin key, so the "we can't take your game back" claim is checkable rather than asserted.
+
+Then Stage 3, the purchase path. A real buyer paid through the full x402 flow: 402 challenge with Blocky402's live fee payer, a signed Hedera transfer, verify and settle through the facilitator, `200` with a playable URL. Confirmed on the Mirror Node that the money moved, the GameKey NFT reached the buyer, and the sale is on the HCS topic.
+
+Two things that cost time and are worth knowing: `payTo` was still the `0.0.xxxxx` placeholder from `.env.example` (the env schema now rejects that at boot), and a test buyer created with `AccountCreateTransaction` couldn't receive the NFT at all — those accounts get 0 auto-associations. Buyers have to be alias-created, which is what a real Privy wallet is.
+
+**Needs from you:** nothing blocking.
+
+**Next:** Stage 5, the wishlist agent.
