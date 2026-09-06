@@ -29,13 +29,12 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
-**Stage:** integration under way, one workflow at a time. Three done and tested against the live API: browse signed out, sign in and know who you are, library and notifications. Everything else still runs on mocks until its turn.
-**Real, not mocked, now:** the catalog, listings, reviews and studio pages all read the API. Privy owns sign-in; `src/mocks/session.ts` is deleted. `GET /api/me` backs the header balance, and `GET /api/me/library` backs `/library`, so what you own is a live Mirror Node answer rather than anything the browser remembers. Notifications poll for real.
-**Still on mocks:** checkout, publish, studio creation, invites, reviews, reports, the agent.
-**Working, unchanged:** a dropped zip is genuinely unpacked in the browser and plays in the page.
-**Deployed:** no.
-**Next:** studio creation and ENS, then publish, then checkout, then the agent.
-**Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entry below before you branch off `main`.
+**Stage:** integration under way, one workflow at a time. Six done: browse signed out, sign in, library and notifications, make a studio, publish a game, and **buy it and play it**. Everything else still runs on mocks until its turn.
+**Real, not mocked, now:** the whole buyer path and the whole dev path. A dev makes a studio with a real ENS subname, publishes a build that is genuinely pinned and tokenised, and can put a collaborator on the splits by email alone. A buyer signs in with Privy, pays through x402 on Hedera with their own wallet, and the game boots in the same tab. Ownership, balance and library are all live Mirror Node answers rather than anything the browser remembers.
+**Still on mocks:** reviews, reports, the invite screen, the agent.
+**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry.
+**Next:** invites and the held payouts they settle, then reviews and reports, then the agent.
+**Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entries below before you branch off `main`.
 
 ### Backend · CGS-server
 
@@ -54,8 +53,9 @@ Only things stopping work right now.
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
-| Suparno | Server-side signing on a **user's** Privy wallet is refused | 2026-09-06 | How the Privy app is meant to get authority over a buyer's embedded wallet: delegated actions, or a server authorization key. Blocks checkout only. Detail in the 2026-09-06 frontend entry. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
+
+_Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
 ---
 
@@ -81,7 +81,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | CSAM check timing | At upload, not at publish | Nothing reaches IPFS — public, essentially permanent — without passing first. See `docs/stage-2.md` §4. |
 | CSAM provider | None chosen yet, fails closed | No vendor decision exists and no free instant option does either. `runProvider()` in `services/moderation/csam.ts` is the single seam a real one drops into. |
 | x402 wiring | `x402ResourceServer` called directly, not `paymentMiddleware` | The route needs two bypass branches (free game, already owns) that depend on the authenticated caller, which the middleware's hook can't see. Same official library either way. |
-| Payment signing | Backend, via Privy's `secp256k1_sign` | Privy's browser SDK doesn't expose raw-hash signing. Same bridge serves the buyer and the agent, so the agent fires the identical path a person does. |
+| Payment signing | ~~Backend, via Privy's `secp256k1_sign`~~ **Superseded 2026-09-06** — the agent still signs here, a person signs in their browser | The premise was that the browser SDK doesn't expose raw-hash signing. It does. Keeping it server-side for a person would have required them to delegate their wallet to us first. See the Frontend table below and the 2026-09-06 (2) entry. |
 | Frontend integration | Frontend owns it; backend provides the x402 helper | See [INTEGRATION.md](INTEGRATION.md). Privy in the browser is frontend too. |
 | Sales audit trail | A `sales` table, one row per settled purchase | Nowhere recorded a failed split distribution before this, and nothing could retry one. `npm run splits:retry` retries every `failed` row. |
 | Agent identity (HCS-14) | Hand-implemented, not `@hashgraphonline/standards-sdk` | The install never finished in 4+ minutes. The AID variant's own spec allows offline derivation from public inputs — no SDK needed, just SHA-384 + Base58. See `docs/stage-5.md` §1. |
@@ -108,7 +108,10 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Integration order | One workflow end to end, then the next | A layer at a time leaves every screen half-wired and nothing testable. A workflow at a time means each pass ends with something that either works in a browser or doesn't. |
 | Who derives display amounts | The server | The float needs the asset's decimals, and the same contract says clients must never hardcode anything about the asset. Sending both is the only way both rules hold. |
 | Who writes notification copy | The client | The server sends `type` plus facts. Wording is a design decision that belongs beside the design system, and a sentence stored in a database row cannot be reworded without a migration. |
-| A user's public key | Derived lazily, on first signing use | Logging in doesn't need a signature. Deriving it at sign-in made every authenticated request depend on signing authority over a wallet the app may not have — so an undelegated user couldn't browse signed in, let alone reach a screen offering delegation. |
+| A user's public key | ~~Derived lazily, on first signing use~~ **Recovered from the payment signature**, and checked against the address being charged | Deriving it at all needs signing authority over the user's wallet, which we deliberately don't have. And it can't be read from the chain either: a wallet that has only received value has a hollow account with no key published, which is every first-time buyer. Recovery costs nothing, needs no permission, and doubles as proof the signer holds the wallet. |
+| Where a purchase is signed | The server builds and freezes the transfer; the **browser** signs the hashes; the server settles | The split falls where the authority does. The alternative was asking every buyer for standing permission to move their money, on the checkout screen, before their first purchase. The agent is unaffected — its wallet is ours, so it still signs in one step, from the same transaction builder. |
+| Where a build is served from | The API, not an IPFS gateway | No gateway will serve one: Pinata refuses HTML on `*.mypinata.cloud` and the public gateways can't find freshly pinned CIDs. IPFS keeps the job it is actually good at — proving what a build is, via the CID on the listing and on-chain. A custom gateway domain would reverse this in one function. |
+| How a build reaches the player | One ownership-checked zip, unpacked in the browser onto the build origin | Per-file auth would mean a Mirror Node call per asset, and a Godot build makes dozens. Unpacking locally also reuses the pipeline the publish preview already had, so purchased builds and previews run the same way on the same isolated origin. |
 | Funding a test wallet | A dev-only server route, off by default | A Privy wallet has no Hedera account until it receives value and no faucet gives testnet USDC to an address, so the operator is the only thing that can start one. Refused at boot when `NODE_ENV=production`. |
 | Seed data | No build, no HTS token, on purpose | Pinning and minting spend real testnet resources, and the first purchasable game should come from the publish flow rather than a script that fakes its way past it. A seeded game browses and refuses to sell, which is the right answer for a row with no build behind it. |
 
@@ -132,7 +135,9 @@ POST  /api/studios/:id/members   invite by email
 POST  /api/games                 upload (multipart) — fails MODERATION_BLOCKED until a CSAM provider is picked
 POST  /api/games/:id/publish     locks splits, mints the token, writes the HCS listing
 GET   /api/games/:id/download    x402-gated — the one non-REST call
-POST  /api/games/:id/pay         signs + settles the payment server-side, for a logged-in buyer
+POST  /api/games/:id/pay/prepare   builds the transfer, returns the hashes to sign
+POST  /api/games/:id/pay/complete  attaches the browser's signatures and settles
+GET   /api/games/:id/build.zip   the build itself, ownership-checked once
 GET   /api/games/:id/owned
 GET   /api/games/:id/reviews
 POST  /api/games/:id/reviews     ownership-gated
@@ -174,9 +179,9 @@ What the client already assumes, so the API doesn't have to guess:
 - **Browsing never touches auth.** Catalog, listing, studio pages, reviews and the invite screen all work signed out. Sign-in appears at buy and at publish, nowhere else.
 - **Free games still mint a key.** `priceUsd: 0` is a real purchase with a real GameKey, not a bypass.
 - **Splits are shown to buyers with handles and roles**, not just percentages, and there is no edit affordance anywhere in the app. Anyone invited by email is on the splits from the first sale whether or not they've accepted. The invite screen says so explicitly, so it has to be true.
-- **The session mock is Privy-shaped**: an email identity plus an embedded wallet with a balance. Swapping it is one file, `src/mocks/session.ts`.
-- **Nothing persists.** Publishing pushes into an in-memory catalog that resets on reload. That's deliberate for now.
-- Integration seams are marked `TODO(integration)` in the client. Grep finds all of them.
+- ~~**The session mock is Privy-shaped**… swapping it is one file.~~ Done. `src/mocks/session.ts` is deleted and Privy owns sign-in.
+- ~~**Nothing persists.** Publishing pushes into an in-memory catalog.~~ Done. Publishing writes to your database, and what a wallet owns is a live Mirror Node answer.
+- Integration seams are still marked `TODO(integration)` in the client. Grep finds what's left: reviews, reports, the invite screen, the agent.
 
 **Everything you flagged as missing an endpoint is answered now:**
 
@@ -184,8 +189,8 @@ What the client already assumes, so the API doesn't have to guess:
 - **Notifications** — `GET /api/notifications` + `POST /api/notifications/:id/read`. Plain polling, not SSE, not derived from HCS. Written by whichever handler causes the event — invite *accept* notifies the studio owner (the invitee has no account row to notify until they accept).
 - **Publish media** — `POST /api/games` takes `build`, `media` (up to 8 files), `coverMediaIndex` marking the star. No index falls back to the generated cover.
 - **Studio creation** — returns the created studio with its `id`. ENS availability is real today but DB-only, not chain-verified — see the endpoint list above.
-- **Download path** — built and tested. `playUrl` is a direct `ipfs.io/ipfs/<cid>/index.html` URL, not a zip stream. That answers the origin question: `ipfs.io` is already a different origin from the app, so `allow-same-origin` on that iframe is safe by construction — **your self-hosted second origin is only needed for the pre-publish local preview**, not for purchased builds.
-- **The x402 helper** — the signing bridge lives on the backend, because it needs Privy's server-side raw-signing primitive that the browser SDK doesn't expose. Ask for it when you get to checkout; don't build Hedera transactions in the browser.
+- ~~**Download path** — `playUrl` is a direct `ipfs.io/ipfs/<cid>/index.html` URL… your self-hosted second origin is only needed for the pre-publish local preview.~~ **Both halves turned out wrong**, and the replacement is `buildPath` + `GET /:id/build.zip`. No gateway will serve a build: Pinata refuses HTML on its shared subdomains and the public ones can't find freshly pinned CIDs. So the second origin is needed for purchased builds after all, and it is what runs them. Evidence in the 2026-09-06 (2) frontend entry.
+- ~~**The x402 helper** — the signing bridge lives on the backend, because it needs Privy's server-side raw-signing primitive that the browser SDK doesn't expose.~~ **The browser SDK does expose it** (`secp256k1_sign`), and using it is what removed the need for the buyer to delegate their wallet. The bridge is still yours for the agent; a person's purchase signs in the browser and settles through `/pay/prepare` + `/pay/complete`. Still no Hedera transactions built client-side — the server freezes it, the browser only signs hashes.
 
 ---
 
@@ -346,3 +351,35 @@ Server-side changes for those three live on a **`frontend-integration` branch on
 Also: `scripts/seed-dev.ts` (`npm run seed:dev` / `seed:wipe`) — the shared database was completely empty, so there was nothing to build browse screens against. Six studios and twelve games, deliberately **with no build and no HTS token**: pinning and minting cost real testnet resources, and the first genuinely purchasable game should come out of the publish flow rather than a script that fakes its way past it. Everything it writes belongs to one placeholder user so the wipe removes exactly that.
 
 **Next:** studio creation and ENS, then publish (which is where splits-without-a-wallet has to be solved), then checkout, then the agent.
+
+### 2026-09-06 · Frontend · Suparno (2)
+
+**Shipped:** three more workflows, same one-at-a-time rule. **Make a studio** (real ENS subname minted on Sepolia, skipping the name is a first-class path), **publish a game** (build pinned to IPFS, token minted, splits locked, and a collaborator can be named by email alone), and **buy it and play it** — the critical path, end to end, with real money moving through x402 on Hedera. Six workflows done. Reviews, reports, the agent and the invite screen are still on mocks.
+
+Still on the **`frontend-integration` branch on CGS-server**. Everything below is on it.
+
+**Changes the contract:**
+
+- **`POST /api/games/:id/pay` is gone.** It could never have worked and is replaced by two calls: `POST /api/games/:id/pay/prepare` builds and freezes the Hedera transfer and returns `{ status: "prepared", intentId, hashes, expiresAt, amountUnits, asset }`, and `POST /api/games/:id/pay/complete` takes `{ intentId, signatures: [{ hash, signature }] }`, attaches them and settles. Prepare answers `{ status: "granted", …grant }` instead when the game is free or already owned. Why it had to split is the first finding below.
+- **`GET /api/games/:id/download` no longer returns `playUrl`.** It returns `buildPath` (a relative, ownership-checked URL on this API) and `buildCid` (what the build is on IPFS). `keyStatus` is unchanged. The second finding below is why.
+- **`GET /api/games/:id/build.zip`** — new. One ownership-checked request for the whole build. Per-file auth was never affordable: a Godot build makes dozens of requests and each one would have been a Mirror Node call.
+- **A split can name someone who has no wallet.** `POST /api/games` accepts each split as `wallet`, `studioMemberId` **or** `email`. An emailed person's `studio_members` row is created by the upload and *that row is the invite* — there is no separate call — and the response carries `invited: [{ id, email, handle }]` so the publish screen can show the link. Migration **0005**: `pending_payouts`, `splits.wallet` nullable, `splits.studio_member_id`, `split_status` gains `partial`.
+- **One unpayable recipient no longer fails everybody's payout.** Amounts are worked out across every share first, so the maths doesn't depend on who happens to have an account; everyone payable is paid in one transaction and the rest is written to `pending_payouts`, with the sale reading `partial`. Accepting an invite backfills the wallet onto every split naming that member and settles what was held.
+- **Entitlement is the chain *or* a purchase record.** `services/games/entitlement.ts`. Between settlement and the GameKey landing, the buyer has paid real money and holds no key; gating play on the Mirror Node alone locked them out of the one moment this product is about. `ownsGame` is unchanged and still backs `/owned` and the review gate, because a verified-purchase badge is a claim made to other people.
+- **`fulfilPurchase` now awaits the sale and key rows** before returning, and backgrounds only the chain work. It was fired with `void`, so `/download` could respond before the purchase existed — and the client asks for the build within milliseconds of that response.
+- **`POST /api/studios`** answers `STUDIO_EXISTS` (409) rather than a constraint error, and `ENS_MINT_FAILED` (502) with `ensTxHash` when the name is taken on-chain after passing the DB check. `GET /api/studios/ens-availability` returns `fullName` alongside the label.
+- **`PINATA_GATEWAY`** in env, and **`storage/`** on disk. Deployment note: builds are now kept as files, so **the server needs a persistent volume**, not an ephemeral filesystem. `deleteBuild` runs on `removed_from_storage` alongside the unpin, or unpinning would be theatre.
+
+**Three findings, and the first two changed the design:**
+
+1. **The server can never sign with a buyer's own wallet, and it does not need to.** This was the open blocker from the last entry. Both documented answers — the buyer delegates their wallet, or the app holds an authorization key over it — grant *standing* permission to move someone's money, which is a much larger thing to ask than one purchase and would have put a wallet-delegation modal in front of every first buy. The browser could always sign: `secp256k1_sign` is a supported method on Privy's own embedded-wallet provider (it is the call Privy makes internally to sign an EIP-7702 authorization) and it signs a raw hash with no Ethereum prefix, which is exactly Hedera's format. **This contradicts the "Payment signing → backend" decision and the INTEGRATION.md line saying the browser SDK doesn't expose raw-hash signing.** So the purchase splits where the authority actually does: the server builds and freezes the transfer, because that needs the 402 terms and a Hedera client; the browser signs the body hashes; the server settles. Nothing is delegated and nothing is held. **The agent is untouched** — its wallet is one we created, so `payForGame()` still signs in one step, and both paths build the identical transaction from one function.
+
+   Two details worth having. A frozen transaction carries one body per node it may be submitted to, each needing its own signature; testnet picked seven, so `setMaxNodesPerTransaction(3)` cuts the browser round trips by more than half while keeping failover. And signatures are matched to bodies **by hash**, not by position, so the order they come back in cannot corrupt a payment.
+
+2. **Every new buyer's account has no public key at all.** First attempt read the key off the Mirror Node and refused every real wallet. The account holding $10 of test USDC reports `key: null`, and its `alias` decodes to 20 bytes — the EVM address, not a 33-byte key. It is a **hollow account (HIP-583)**: an account created by *receiving* value at an address that has never signed anything holds the money and publishes no key until the first time it signs. That is exactly the account a first-time buyer has, at exactly the moment they try to buy, and the faucet is what creates it that way. So nothing asks for the key up front. It is recovered from the payment signature and verified against the address being charged — which also proves the signer holds that wallet — and signing the payment is what completes the account. Both recovery ids are tried and the one deriving the right address wins, because Privy documents neither the 0/1 nor the 27/28 encoding of the v byte. Checked over 60 generated keys with a wrong-key signature correctly refused. `ensureUserPublicKey` is deleted; `users.public_key_hex` stays for the agent's wallets, which we create and can sign with.
+
+3. **IPFS cannot serve a build to a browser at all.** Not slowly — at all. Pinata answers **403 `ERR_ID:00023`** for HTML through any `*.mypinata.cloud` gateway: the whole directory CID, not just `index.html`, and for authenticated reads as well as anonymous ones. `?download=true`, `?format=raw`, `?format=car` and the SDK with the JWT were all refused; its own advice is to add a custom domain to the gateway. And no public gateway substitutes — `ipfs.io` and `dweb.link` both time out on this account's CIDs, because Pinata does not announce freshly pinned content to the DHT quickly. All of that was checked against the real pinned build, not assumed. **This retires the "`playUrl` is a direct `ipfs.io` URL, so the second origin isn't needed for purchased builds" line under The contract** — both halves of it were wrong. Delivery and provenance are separate now: IPFS still proves what a build *is* and the CID still goes on-chain, but the server serves it, and the client unpacks the zip onto its own isolated build origin using the same pipeline the publish preview already used. Cover art was never affected; images are not blocked. The way back is a custom domain on the Pinata gateway, which is one function's worth of change and nothing on the client would move.
+
+**Needs from you:** nothing blocking. Two things worth knowing: the operator is still near $10 of testnet USDC and now pays the faucet *and* every split, and if you have a domain to point at the Pinata gateway, that turns finding 3 back into a one-line config change.
+
+**Next:** the invite screen and the held-payout settlement it triggers, then reviews, likes and reports, then the agent.
