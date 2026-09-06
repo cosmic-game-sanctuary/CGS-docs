@@ -32,7 +32,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Stage:** integration under way, one workflow at a time. Six done: browse signed out, sign in, library and notifications, make a studio, publish a game, and **buy it and play it**. Everything else still runs on mocks until its turn.
 **Real, not mocked, now:** the whole buyer path and the whole dev path. A dev makes a studio with a real ENS subname, publishes a build that is genuinely pinned and tokenised, and can put a collaborator on the splits by email alone. A buyer signs in with Privy, pays through x402 on Hedera with their own wallet, and the game boots in the same tab. Ownership, balance and library are all live Mirror Node answers rather than anything the browser remembers.
 **Still on mocks:** reviews, reports, the invite screen, the agent.
-**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry. **Sharper than that, found 2026-09-07:** because the database is shared and the filesystem is not, a build published on one machine 404s on the other, and it cannot be fetched back from IPFS. Unresolved and blocking deployment.
+**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry. **Resolved 2026-09-07:** builds are pinned as a zip as well as a directory, and a missing local file is refetched from IPFS and re-cached. A persistent volume is now an optimisation rather than a requirement. Games published before migration 0006 need `npm run builds:backfill` run where their zip still is.
 **Next:** invites and the held payouts they settle, then reviews and reports, then the agent.
 **Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entries below before you branch off `main`.
 
@@ -405,3 +405,24 @@ Still on the **`frontend-integration` branch on CGS-server**. Everything below i
 **Also worth knowing:** a buyer does **not** need HBAR to pay. Blocky402's fee payer covers the network fee, so USDC alone is enough for the purchase. What HBAR is needed for is the very first transfer into a brand new wallet, because receiving value is what creates the Hedera account. A buyer who has nothing at all still cannot start unaided — Privy's onramp is the answer to that, and it is one of their qualification requirements.
 
 **Next:** the profile page's server side, withdrawing funds back out of a Privy wallet, and wiring notifications through to the bell.
+
+### 2026-09-07 · Backend · Priyanshu (2)
+
+**Shipped:** the server side of a wallet page, withdrawals, and the emails that were never being sent. Also fixed the build problem from the previous entry, which turned out to be solvable for free.
+
+**Changes the contract:**
+
+- **`GET /api/me` gains `hbarUnits` and `hbar`.** Reported separately from the settlement asset because HBAR is not spending money here: the facilitator covers the fee on a purchase and the operator covers it on a withdrawal. A wallet with 0 USDC and some HBAR is funded with nothing to spend, and that read identically to an empty wallet before.
+- **`POST /api/me/withdraw/prepare` + `/complete`.** Same two-step shape as a purchase, since the server still cannot sign for a user's wallet. `to` takes either a `0.0.x` or an EVM address. Omit `amountUnits` to send everything. **The operator pays the network fee**, so a wallet holding only USDC is not a wallet you cannot empty. Tested on testnet: full balance out, sender's HBAR untouched.
+- **Invites are actually delivered.** `POST /api/studios/:id/members`, and naming someone by `email` on a split, both already created the membership row that *is* the invite, and nothing ever told that person. They have no account, so no notification row could reach them and mail was the only channel. Request and response shapes are unchanged.
+- **`games.build_zip_cid`** (migration 0006). Not client-facing.
+
+**The build problem is fixed, and cheaply.** The earlier conclusion was that IPFS could not serve a build. That is narrower than it looked: Pinata refuses **HTML content**, not the build. Checked file by file inside a real pinned build — `index.wasm` is `200`, `index.html` is `403`, and a directory CID resolves to index.html so it 403s too. **A zip is `application/zip` and serves normally.** So every build is now pinned twice: `build_cid` (the directory) stays the provenance answer, and `build_zip_cid` (the original zip) is the delivery answer. `findBuild()` treats disk as a cache and refetches a missing build. Round-tripped for real: pinned, deleted the local copy, got a byte-identical file back.
+
+**Needs from you:** `npm run builds:backfill` **on your machine**. The three existing `deadzone` games predate this, so their zips only exist where they were published. The script pins what it can reach and names what it cannot rather than skipping quietly. Republishing also works.
+
+**Worth knowing about email:** with no verified domain Resend only delivers to the address the Resend account itself was registered with. Sends to anyone else are refused and logged with the recipient. That is configuration, not a bug, and nothing on the client changes once a domain is verified. A send never fails the request that caused it.
+
+**Also:** `INTEGRATION.md` §3 and §4 were still describing `POST /:id/pay` and a `playUrl` from `/download`, both of which you replaced. Corrected to prepare/complete and `buildPath`, including the reversal about the second origin now being needed for purchased builds too.
+
+**Next:** the wishlist agent — the price-drop endpoint it needs to fire at all, and the notifications around it.

@@ -42,10 +42,16 @@ reviews and the invite screen all return real data signed out. Send the token
 when you have one and you additionally get an `owned` flag on game detail. Do
 not gate browsing behind login — that's a product rule, not a preference.
 
-Privy config that matters on your side: `embeddedWallets.createOnLogin` so a
-wallet exists immediately after login. The backend reads the user's embedded
-Ethereum wallet address out of their Privy account; if a user somehow has no
+Privy config that matters on your side: `embeddedWallets.ethereum.createOnLogin`
+so a wallet exists immediately after login. The backend reads the user's
+embedded Ethereum wallet address out of their Privy account; if a user has no
 embedded wallet, every authenticated request fails, so don't make that optional.
+
+**Retry the first `/api/me` after a brand-new sign-in.** Privy creates the
+wallet as part of logging in and for a moment afterwards its own API still
+reports the account without one, so the server correctly answers "no embedded
+wallet" and a cached failure strands the session permanently. `SessionProvider`
+now retries four times over about four seconds.
 
 ---
 
@@ -57,7 +63,9 @@ GET    /api/games/:idOrSlug             detail + studio + splits + media (+ owne
 POST   /api/games                       upload, multipart — see §5
 POST   /api/games/:id/publish           locks splits, mints the token, writes the HCS listing
 GET    /api/games/:id/download          x402-gated — see §4
-POST   /api/games/:id/pay               signs + settles payment server-side — see §4
+GET    /api/games/:id/build.zip         the build itself, ownership-checked
+POST   /api/games/:id/pay/prepare       server builds and freezes the transfer — see §4
+POST   /api/games/:id/pay/complete      browser's signatures go back, server settles
 GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated
@@ -76,8 +84,10 @@ GET    /api/invites/:id                 public — the emailed link lands here
 POST   /api/invites/:id/accept
 POST   /api/agents                      returns a wallet address to fund
 GET    /api/agents/:id                  status, balance, trigger
-GET    /api/me                          who you are, wallet balance, your studio — see §6
+GET    /api/me                          who you are, wallet balances, your studio — see §6
 GET    /api/me/library                  every game you actually hold a key for — see §6
+POST   /api/me/withdraw/prepare         build a transfer out of the wallet — see §6.1
+POST   /api/me/withdraw/complete        sign it in the browser, server submits
 GET    /api/notifications
 POST   /api/notifications/:id/read
 POST   /api/reports
@@ -106,14 +116,21 @@ ordinary REST. It has three outcomes and you only handle two of them:
 already owns it. Body:
 
 ```json
-{ "playUrl": "https://ipfs.io/ipfs/<cid>/index.html",
+{ "buildPath": "/api/games/<id>/build.zip", "buildCid": "bafy…",
   "tokenId": "0.0.998877", "keyStatus": "free" | "owned" }
 ```
 
-Point the player iframe at `playUrl` and you're done. Note this is already a
-different origin from the app, so `allow-same-origin` on that iframe is safe by
-construction — you don't need your `VITE_PREVIEW_ORIGIN` trick for purchased
-builds, only for the pre-publish local preview.
+**There is no `playUrl`, and IPFS is not where you fetch the build from.**
+Pinata refuses to serve HTML through its public gateway (`403 ERR_ID:00023`),
+and public gateways time out on freshly pinned content. So `buildPath` is an
+ownership-checked URL on this API that returns the zip, and the client unpacks
+it onto its own isolated build origin — the same pipeline the publish preview
+already uses. `buildCid` is still there because IPFS is what makes a build
+verifiable by someone who doesn't trust us; it just isn't the delivery route.
+
+Because the build now comes from this origin, the second origin **is** needed
+for purchased builds, not only the local preview. That reverses what this
+section used to say.
 
 **It returns `402`** when payment is required, with the payment terms:
 
@@ -126,16 +143,29 @@ builds, only for the pre-publish local preview.
                 "extra": { "feePayer": "0.0.7162784" } }] }
 ```
 
-You do **not** build a Hedera transaction from this. Call the helper instead:
+You do **not** build a Hedera transaction from this. It takes two calls:
 
 ```
-POST /api/games/:id/pay      requireAuth, no body
+POST /api/games/:id/pay/prepare    requireAuth, no body
+  -> { status: "prepared", intentId, hashes, expiresAt, amountUnits, asset }
+  -> or { status: "granted", …grant }  when it's free or already owned
+
+POST /api/games/:id/pay/complete   requireAuth  { intentId, signatures }
 ```
 
-Signs the payment with the logged-in buyer's own Privy wallet server-side (the
-browser can't hold a signing key) and returns the same
-`{ playUrl, tokenId, keyStatus }` shape as the `200` case above. Use it whenever
-`GET /:id/download` came back `402` and the buyer confirms they want to pay.
+**The browser signs, not the server.** The earlier version of this doc said the
+browser can't do raw-hash signing. It can: `secp256k1_sign` is supported on
+Privy's embedded wallet provider and signs a hash with no Ethereum prefix,
+which is exactly Hedera's format. Signing server-side would have required every
+buyer to delegate their wallet to the store first, which is standing permission
+to move their money and a much larger thing to ask than one game. So the server
+builds and freezes (it needs the 402 terms and a Hedera client), the browser
+signs, the server settles.
+
+`hashes` is a list because a frozen Hedera transaction carries one body per
+node it may go to, each needing its own signature. Send them back as
+`[{ hash, signature }]` — they're matched by hash, not position, so order can't
+corrupt a payment.
 
 **`keyStatus: "pending"`** on a successful purchase is deliberate and it changes
 your UI. Payment has settled and the buyer is entitled to the game *right now* —
@@ -246,6 +276,74 @@ needs wired; nothing else in this doc depends on it.
 neither was ever actually computed before this. `mocks/types.ts` will need a
 `Comment` type (mirror `Review` minus `rating`) and a `PlaySession`-shaped
 concept for whatever calls the two session endpoints.
+
+---
+
+
+### `GET /api/me` gains two balance fields
+
+```json
+{ "balanceUnits": "10000000", "balanceUsd": 10.00, "balanceAssetDecimals": 6,
+  "hbarUnits": "100000000", "hbar": 1.0 }
+```
+
+`hbarUnits` is tinybars, `hbar` is the same thing for display. It is reported
+separately from the settlement asset because **HBAR is not spending money
+here**: the x402 facilitator covers the fee on a purchase and the operator
+covers it on a withdrawal, so HBAR is only ever what opened the account. A
+wallet holding 0 USDC and some HBAR is funded with nothing to spend, and
+without this field that reads identically to a wallet with nothing at all.
+
+### 6.1 Taking money out
+
+Same two-step shape as a purchase, and for the same reason: the server builds
+and freezes the transfer because that needs a Hedera client, and the browser
+signs because the key is the person's. Reuse `useWalletSigner`.
+
+```http
+POST /api/me/withdraw/prepare    requireAuth   { to, asset?, amountUnits? }
+```
+`to` is **either** a Hedera account id (`0.0.x`) **or** an EVM address —
+someone copying an address out of their own wallet has no reason to know which
+one we wanted. `asset` defaults to the settlement asset; pass `"0.0.0"` for
+HBAR. Omit `amountUnits` to send the whole balance, which is what "take my
+money out" usually means.
+
+```json
+{ "intentId": "…", "hashes": ["0x…"], "to": "0.0.512345",
+  "asset": "0.0.429274", "amountUnits": "10000000", "amountDisplay": 10.0,
+  "assetDecimals": 6, "expiresAt": "…" }
+```
+
+```http
+POST /api/me/withdraw/complete   requireAuth   { intentId, signatures }
+```
+`signatures` is `[{ hash, signature }]`, exactly as `/pay/complete` takes them.
+Returns `{ status: "sent", transactionId, to, asset, amountUnits }`.
+
+**The user does not need HBAR to withdraw.** The operator pays the network fee,
+because otherwise a wallet holding only USDC would be a wallet you cannot
+empty. Verified on testnet: the full balance leaves and the sender's HBAR is
+untouched.
+
+Two failures worth handling by name, both arriving as `VALIDATION_FAILED` with
+the field in `details`: `to` when the destination has no Hedera account yet, or
+when it cannot receive the token (it needs associating in that wallet first);
+and `intentId` when the intent expired, which is a "start it again", not an
+error to show as a failure.
+
+### Invites now actually send
+
+`POST /api/studios/:id/members`, and naming someone by `email` on a split in
+`POST /api/games`, both create the membership row that *is* the invite. They
+now also email that person. Nothing about the request or response changed —
+this is the half that was missing, since an invitee has no account and so no
+notification row could ever reach them.
+
+Mail is best-effort by design: a send never fails the request that caused it.
+**With no verified domain, Resend only delivers to the account's own address**,
+so an invite to anyone else is refused and logged. That is configuration, not a
+bug, and it changes nothing on the client.
 
 ---
 
