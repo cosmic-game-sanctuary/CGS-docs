@@ -4,7 +4,7 @@ Shared status across the three repos. Two people, two halves, one file.
 
 **Before you start:** read Status and Blockers. That is the whole handover.
 
-**When you stop:** add one entry at the top of the Log, update the half of Status you moved, and add or clear blockers.
+**When you stop:** add one entry at the bottom of the Log, update the half of Status you moved, and add or clear blockers.
 
 Keep this file to **what the other person needs**: anything crossing the repo boundary, any decision that changes the contract, anything that unblocks them. Work only one repo cares about belongs in that repo's `CLAUDE.md`, not here. Append; never rewrite someone else's entry.
 
@@ -29,11 +29,13 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
-**Stage:** the whole UI is built and working on mock data. No integration yet, by design.
-**Working end to end:** buy (browse, listing, checkout, key, instant play), publish (drop a zip, see it running, details, splits, live in the catalog), get invited (invite by email at publish, accept, land in the studio).
-**Real, not faked:** a dropped zip is genuinely unpacked in the browser and plays in the page.
+**Stage:** integration under way, one workflow at a time. Three done and tested against the live API: browse signed out, sign in and know who you are, library and notifications. Everything else still runs on mocks until its turn.
+**Real, not mocked, now:** the catalog, listings, reviews and studio pages all read the API. Privy owns sign-in; `src/mocks/session.ts` is deleted. `GET /api/me` backs the header balance, and `GET /api/me/library` backs `/library`, so what you own is a live Mirror Node answer rather than anything the browser remembers. Notifications poll for real.
+**Still on mocks:** checkout, publish, studio creation, invites, reviews, reports, the agent.
+**Working, unchanged:** a dropped zip is genuinely unpacked in the browser and plays in the page.
 **Deployed:** no.
-**Next:** per-screen audit, then Privy, then the API, then the x402 download.
+**Next:** studio creation and ENS, then publish, then checkout, then the agent.
+**Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entry below before you branch off `main`.
 
 ### Backend · CGS-server
 
@@ -52,6 +54,8 @@ Only things stopping work right now.
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
+| Suparno | Server-side signing on a **user's** Privy wallet is refused | 2026-09-06 | How the Privy app is meant to get authority over a buyer's embedded wallet: delegated actions, or a server authorization key. Blocks checkout only. Detail in the 2026-09-06 frontend entry. |
+| Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 
 ---
 
@@ -101,6 +105,12 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Checkout is an overlay, not a route | | The claim is that the game boots in the same tab. A navigation unmounts the page and breaks exactly what we're claiming, which also means the payment call's latency is visible and budgeted. |
 | Whole UI on mock data before any integration | | Lets the design and the flows be validated without waiting on the backend or Privy. Integration is a later, deliberate phase. |
 | Money in the UI | `priceUsd` for display only | All arithmetic will use `priceUnits`. Nothing does money math on a float. |
+| Integration order | One workflow end to end, then the next | A layer at a time leaves every screen half-wired and nothing testable. A workflow at a time means each pass ends with something that either works in a browser or doesn't. |
+| Who derives display amounts | The server | The float needs the asset's decimals, and the same contract says clients must never hardcode anything about the asset. Sending both is the only way both rules hold. |
+| Who writes notification copy | The client | The server sends `type` plus facts. Wording is a design decision that belongs beside the design system, and a sentence stored in a database row cannot be reworded without a migration. |
+| A user's public key | Derived lazily, on first signing use | Logging in doesn't need a signature. Deriving it at sign-in made every authenticated request depend on signing authority over a wallet the app may not have — so an undelegated user couldn't browse signed in, let alone reach a screen offering delegation. |
+| Funding a test wallet | A dev-only server route, off by default | A Privy wallet has no Hedera account until it receives value and no faucet gives testnet USDC to an address, so the operator is the only thing that can start one. Refused at boot when `NODE_ENV=production`. |
+| Seed data | No build, no HTS token, on purpose | Pinning and minting spend real testnet resources, and the first purchasable game should come from the publish flow rather than a script that fakes its way past it. A seeded game browses and refuses to sell, which is the right answer for a row with no build behind it. |
 
 ---
 
@@ -205,7 +215,7 @@ The weakest axis right now is that the catalog is twelve games we wrote ourselve
 
 ## Log
 
-Newest first. One entry per side per day, tagged so both of us can append without landing on the same line. If you worked on the other side that day, that's a second entry under the other tag, not a note inside your usual one.
+Oldest first, so a new entry goes on the end and the file reads in the order things happened. One entry per side per day, tagged so both of us can append without landing on the same line. If you worked on the other side that day, that's a second entry under the other tag, not a note inside your usual one.
 
 ### 2026-09-05 · Frontend · Suparno
 
@@ -302,3 +312,37 @@ The reversal: likes, comments, and timed play sessions, all cut in the original 
 **Needs from you:** nothing blocking.
 
 **Next:** deployment.
+
+### 2026-09-06 · Frontend · Suparno
+
+**Shipped:** integration started, run as one workflow at a time — build it, test it end to end, then the next. Three are done: **browse signed out** (catalog, filters, sort, search, listings, reviews, studio pages), **sign in** (Privy, `GET /api/me`, header balance, sign out), and **library plus notifications**. `src/mocks/session.ts` is gone; `mocks/games.ts` still backs the screens whose turn hasn't come.
+
+Server-side changes for those three live on a **`frontend-integration` branch on CGS-server**. Everything on it is additive — no existing response changed shape, and the one migration only relaxes a constraint — so it should merge without a conversation. Branch off it rather than `main` if you touch these files.
+
+**Changes the contract:**
+
+- **`priceUsd` and `priceAssetDecimals` on every serialized game**, and `balanceUsd`/`balanceAssetDecimals` on `/api/me`. INTEGRATION.md §7 has always promised prices arrive twice; `serializeGame` only ever sent units, and the decimals needed to derive the float were server-only config that §7 also says never to hardcode. Arithmetic still runs on the integer everywhere.
+- **`studio.ens` is now the full name** (`tinroof.cgs-sanctuary.eth`), not the bare label. Clients would otherwise have to be told the parent name separately. `coverUrl` and each media item's `url` come as gateway URLs beside the CIDs for the same reason.
+- **The embedded studio gains `memberCount` and `ownerAddress`**, both shown on every listing and neither on the studios row. Batched: two queries per page, not two per game.
+- **`GET /api/studios/:idOrSlug`** gains `ens`, `ownerAddress`, `memberCount`, and member `id`s. Member **`email` only when the caller owns the studio** — that page is public and was about to leak them.
+- **`GET /api/games` takes `studioId`.** The studio page shows full cards and the studio route returns only enough of each game to identify one.
+- **`sort=rating` actually sorts by rating.** It silently fell back to newest, which on screen is a filter chip that does nothing. Unrated games sort last rather than tying at zero. `search` now covers tagline, tags and studio name; title-only missed a genre typed into the box, which is the obvious case.
+- **`POST /api/studios` inserts the owner into `studio_members`** with a handle (optional `handle` in the body, else the part before the @), and returns it. Without that row a new studio reported zero people on every listing, and the owner had no handle to put on their own game's splits — the one person on the team the credits couldn't name. `/api/me`'s `studio` carries `handle` now.
+- **Notification payloads carry facts, not prose.** Every one gains `slug` so a row can link; invites carry `studioName`/`studioSlug`; `agent_fired` carries `title`, `priceUnits` and `triggerPriceUnits`, since it names a game the buyer never opened. Money in a payload gets a `*Usd` beside the units, added on read so existing rows get it too. **A `sale` now tells each person what they earned** (`sharePct`/`shareUnits`, null if they're not on the splits) instead of sending the full sale price to everyone — the row's "your share is already in your wallet" was wrong for every collaborator on a split.
+- **`POST /api/notifications/read-all`.** One gesture was thirty POSTs against a 200-per-15-minutes limiter.
+- **`POST /api/dev/faucet`**, dev only. Not mounted unless `DEV_FAUCET=on`, and the env schema refuses to boot with it on under `NODE_ENV=production`. It exists because a Privy embedded wallet has no Hedera account until it first receives value and nothing hands out testnet USDC to an address, so a new buyer could never buy anything. Sends HBAR first (that is what creates the account), then the asset, from the operator.
+- **Migration 0004: `users.public_key_hex` is nullable.** See below.
+
+**Four things that were broken, found by wiring a browser to them:**
+
+1. **`GET /api/games/:idOrSlug` and `GET /api/studios/:idOrSlug` returned 500 for every slug.** `or(eq(games.id, idOrSlug), …)` makes Postgres cast the parameter to uuid and throw `invalid input syntax for type uuid`. Since every listing URL in the client is a slug, the entire listing route was unreachable. Fixed with an `isUuid` guard so the id branch is only included when the value could be one.
+
+2. **Deriving a user's public key at sign-in cannot work for a real buyer.** `requireAuth` → `upsertUser` → `derivePublicKeyHex` asks Privy to **sign with the user's wallet**, during login, purely to cache a key. Privy refuses with `No valid authorization keys or user signing keys available`: an app can sign freely with wallets **it** created (`privy.wallets().create()` — the agent path, which is why every test passed) but a user's embedded wallet is made in the browser and owned by the user. So every authenticated request failed for anyone who signed in through the UI. It is now derived lazily on first use and cached, which is right regardless: logging in does not need a signature, and making it need one meant a user who hadn't delegated couldn't even browse signed in, let alone reach a screen that offers delegation. `POST /:id/pay` calls `ensureUserPublicKey` and returns `WALLET_NOT_DELEGATED` rather than surfacing a raw Privy error on the screen where money is about to move.
+
+3. **`PRIVY_VERIFICATION_KEY` had to be pasted in exactly one shape or nothing authenticated worked.** `jose` needs real PEM, and a key in a `.env` almost never survives as one. It now accepts full PEM, PEM flattened with literal `\n` (dotenv only expands those inside double quotes), or the bare base64 the dashboard shows, and **parses it at boot with node's own crypto** — so a bad key is one clear line at startup instead of `"spki" must be SPKI formatted string` buried in a 401 on every request.
+
+4. **`requireAuth` threw away every reason.** Missing header, unverifiable token, and a Privy account with no embedded wallet all became the same "Sign in required", and those are three different fixes. It now says which.
+
+Also: `scripts/seed-dev.ts` (`npm run seed:dev` / `seed:wipe`) — the shared database was completely empty, so there was nothing to build browse screens against. Six studios and twelve games, deliberately **with no build and no HTS token**: pinning and minting cost real testnet resources, and the first genuinely purchasable game should come out of the publish flow rather than a script that fakes its way past it. Everything it writes belongs to one placeholder user so the wipe removes exactly that.
+
+**Next:** studio creation and ENS, then publish (which is where splits-without-a-wallet has to be solved), then checkout, then the agent.
