@@ -32,7 +32,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Stage:** integration under way, one workflow at a time. Six done: browse signed out, sign in, library and notifications, make a studio, publish a game, and **buy it and play it**. Everything else still runs on mocks until its turn.
 **Real, not mocked, now:** the whole buyer path and the whole dev path. A dev makes a studio with a real ENS subname, publishes a build that is genuinely pinned and tokenised, and can put a collaborator on the splits by email alone. A buyer signs in with Privy, pays through x402 on Hedera with their own wallet, and the game boots in the same tab. Ownership, balance and library are all live Mirror Node answers rather than anything the browser remembers.
 **Still on mocks:** reviews, reports, the invite screen, the agent.
-**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry.
+**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry. **Sharper than that, found 2026-09-07:** because the database is shared and the filesystem is not, a build published on one machine 404s on the other, and it cannot be fetched back from IPFS. Unresolved and blocking deployment.
 **Next:** invites and the held payouts they settle, then reviews and reports, then the agent.
 **Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entries below before you branch off `main`.
 
@@ -383,3 +383,25 @@ Still on the **`frontend-integration` branch on CGS-server**. Everything below i
 **Needs from you:** nothing blocking. Two things worth knowing: the operator is still near $10 of testnet USDC and now pays the faucet *and* every split, and if you have a domain to point at the Pinata gateway, that turns finding 3 back into a one-line config change.
 
 **Next:** the invite screen and the held-payout settlement it triggers, then reviews, likes and reports, then the agent.
+
+### 2026-09-07 · Both · Priyanshu
+
+**Shipped:** the wallet address is on screen, so funding no longer depends on the faucet. Someone with their own testnet funds can send straight to their Privy wallet from HashPack or anything else. Two bugs found by running the stack from a second machine, and one architectural consequence that has to be settled before deployment.
+
+**Changes the contract:** nothing. `/api/me` already returned `evmAddress`; the menu just never showed it.
+
+**Three fixes:**
+
+1. **A first-ever sign-in could land in a permanently broken session.** Privy creates the embedded wallet as part of logging in, and for a moment afterwards its own API still reports the account without one. The server reads that and correctly answers "no embedded wallet" — and the client cached that answer, because it only re-read `/api/me` on funding, a purchase, or a studio creation, none of which are reachable from that state. Only a reload fixed it. `/api/me` is now retried four times over about four seconds. Confirmed it was a race and not a real absence, by resolving the same account server-side afterwards.
+
+2. **`gatewayUrl()` fell back to `ipfs.io`, which does not work for our content at all.** A cover image and a build directory both time out there, because Pinata doesn't announce freshly pinned content to the DHT quickly. `gateway.pinata.cloud` serves it, verified `200 image/png` on the exact cover CID that was failing. That is the default now; `PINATA_GATEWAY` overrides it. **This narrows the earlier finding rather than contradicting it:** Pinata's public gateway refuses **HTML specifically**, not everything. Checked file by file inside a real pinned build — `index.wasm` returns `200`, `index.html` returns `403 ERR_ID:00023`. A directory CID resolves to index.html, so it 403s too. Images were never the problem.
+
+3. **The missing-build 404 read as a mangled sentence.** `Errors.notFound()` appends `" not found."`, and it was being handed a whole explanation. Message and reason are separated now.
+
+**Needs from you:** a decision, and it blocks deployment.
+
+**`storage/builds/<gameId>.zip` lives on the filesystem of whichever server pinned it, and the database is shared while the filesystem is not.** A game published on one laptop 404s on the other — which is exactly what happened, and why one of us could play `deadzone` and the other could not. The same thing breaks a deploy on an ephemeral filesystem: every build vanishes on restart. It cannot be recovered from IPFS either, because the entry file is HTML and the public gateway refuses it. So it needs a persistent volume or shared object storage, or a dedicated Pinata gateway on a custom domain, and that is a call for both of us rather than a code fix.
+
+**Also worth knowing:** a buyer does **not** need HBAR to pay. Blocky402's fee payer covers the network fee, so USDC alone is enough for the purchase. What HBAR is needed for is the very first transfer into a brand new wallet, because receiving value is what creates the Hedera account. A buyer who has nothing at all still cannot start unaided — Privy's onramp is the answer to that, and it is one of their qualification requirements.
+
+**Next:** the profile page's server side, withdrawing funds back out of a Privy wallet, and wiring notifications through to the bell.
