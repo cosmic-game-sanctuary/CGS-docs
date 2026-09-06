@@ -53,7 +53,7 @@ embedded wallet, every authenticated request fails, so don't make that optional.
 
 ```
 GET    /api/games                       catalog: search, tag, sort, freeOnly, cursor, limit
-GET    /api/games/:idOrSlug             detail + studio + splits + media (+ owned when signed in)
+GET    /api/games/:idOrSlug             detail + studio + splits + media (+ owned, liked when signed in)
 POST   /api/games                       upload, multipart — see §5
 POST   /api/games/:id/publish           locks splits, mints the token, writes the HCS listing
 GET    /api/games/:id/download          x402-gated — see §4
@@ -62,6 +62,12 @@ GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated
 PATCH  /api/reviews/:id
+POST   /api/games/:id/like              toggle — see §6
+GET    /api/games/:id/comments
+POST   /api/games/:id/comments          no ownership gate — see §6
+PATCH  /api/comments/:id
+POST   /api/games/:id/sessions          call when play actually starts — see §6
+PATCH  /api/games/:id/sessions/:id      call when play ends
 POST   /api/studios
 GET    /api/studios/ens-availability    ?name=
 GET    /api/studios/:idOrSlug
@@ -70,6 +76,8 @@ GET    /api/invites/:id                 public — the emailed link lands here
 POST   /api/invites/:id/accept
 POST   /api/agents                      returns a wallet address to fund
 GET    /api/agents/:id                  status, balance, trigger
+GET    /api/me                          who you are, wallet balance, your studio — see §6
+GET    /api/me/library                  every game you actually hold a key for — see §6
 GET    /api/notifications
 POST   /api/notifications/:id/read
 POST   /api/reports
@@ -168,7 +176,80 @@ provider is wired.
 
 ---
 
-## 6. Money
+## 6. Identity, library, likes, comments, playtime
+
+New. `session.ts`'s mocked fields (`email`, `balanceUsd`, `studioId`,
+`ownedGameIds`) and the "achievements, profiles, likes, comments" line in the
+frontend brief's "deliberately not building" list are both superseded by
+this — the cut was for time reasons that no longer apply, so it's reversed.
+
+```http
+GET /api/me            requireAuth
+```
+```json
+{ "id": "...", "email": "dev@example.com", "evmAddress": "0x71C7…",
+  "hederaAccountId": "0.0.512345", "balanceUnits": "4500000",
+  "balanceAsset": "0.0.429274",
+  "studio": { "id": "...", "name": "Tin Roof", "slug": "tin-roof", "role": "owner" } }
+```
+This is `session.ts`'s real backing. `balanceUnits` is an integer in
+`balanceAsset`'s smallest units — same rule as every other price in this doc,
+divide for display, never do the arithmetic on a float. `studio` is `null`
+until this user owns one or has an **accepted** invite into one; `role` tells
+you which.
+
+```http
+GET /api/me/library     requireAuth
+```
+```json
+{ "games": [ { "id": "...", "slug": "...", "title": "...", "tagline": "...",
+  "studio": { "id": "...", "name": "...", "ens": "tinroof.eth", "slug": "..." },
+  "coverCid": "...", "coverSeed": 8412, "status": "published",
+  "serial": 2, "myPlayCount": 3, "myPlaytimeSeconds": 5400 } ] }
+```
+The real answer to `/library`'s "keys you hold" — checked live against the
+Mirror Node, not a local flag, so it's correct even for a key minted outside
+this app. `myPlayCount`/`myPlaytimeSeconds` are this user's own sessions on
+that game (see below) — the concrete "how much you've played this."
+
+```http
+POST /api/games/:id/like              requireAuth   → { liked, likeCount }
+```
+Toggle — call it again to unlike. No ownership needed, so it's safe to show
+on a listing the buyer hasn't purchased yet.
+
+```http
+GET  /api/games/:id/comments          → { comments, nextCursor }
+POST /api/games/:id/comments          requireAuth   { body }
+PATCH /api/comments/:id               requireAuth (author)
+```
+Ordinary discussion, no ownership gate and no rating — the deliberate
+difference from a review. Same shape and pagination as
+`GET /api/games/:id/reviews`, so one component can likely render both.
+
+```http
+POST  /api/games/:id/sessions              requireAuth   → { sessionId, startedAt }
+PATCH /api/games/:id/sessions/:sessionId   requireAuth   { } → session
+```
+Call the first the moment the player actually boots — right after
+`/download` or `/pay` hands back a `playUrl`, not before; it re-checks
+ownership server-side, so it'll reject a game this wallet doesn't hold. Call
+the second when play ends: component unmount, or a `beforeunload` handler if
+you can reach one before the tab actually closes. It's fine if that call
+sometimes never fires (a crashed tab, a hard-killed browser) — the session
+still counts toward `plays` on the listing, it just contributes no duration
+to `myPlaytimeSeconds`. This is the piece the player surface (`GameStage`)
+needs wired; nothing else in this doc depends on it.
+
+`Game` gains `liked` (only when signed in, next to `owned`) and real
+`plays`/`likeCount` — both existed in `types.ts` and the contract already,
+neither was ever actually computed before this. `mocks/types.ts` will need a
+`Comment` type (mirror `Review` minus `rating`) and a `PlaySession`-shaped
+concept for whatever calls the two session endpoints.
+
+---
+
+## 7. Money
 
 Every price arrives twice:
 
@@ -180,23 +261,28 @@ Every price arrives twice:
 
 ---
 
-## 7. Suggested order
+## 8. Suggested order
 
 1. **Catalog + detail** — no auth, no chain, immediate payoff. Proves the fetch
    layer and the shapes.
 2. **Privy login** — `usePrivy()`, `getAccessToken()`, send the header. Now
-   `owned` starts appearing.
-3. **Library + notifications** — plain authenticated GETs.
+   `owned`/`liked` start appearing, and `GET /api/me` replaces the mocked
+   session fields.
+3. **Library + notifications** — `GET /api/me/library` plus the existing
+   notification routes, both plain authenticated GETs.
 4. **Publish** — the biggest form. Expect `MODERATION_BLOCKED` until the CSAM
    provider lands; everything up to that point is real.
-5. **Checkout** — last, because it needs the helper and a funded wallet.
+5. **Checkout** — needs the helper and a funded wallet.
+6. **Likes, comments, play sessions** — no particular order, none of the
+   other five steps depend on them; the session calls are the only ones tied
+   to a specific moment (see §6).
 
 Steps 1–4 need nothing from the backend that isn't already live and tested.
 Step 5 is the one to sync on before starting.
 
 ---
 
-## 8. Local setup
+## 9. Local setup
 
 Backend runs on `:3000`. Set `CORS_ORIGIN` in the backend `.env` to your Vite
 origin (defaults to `http://localhost:5173`) — if requests fail with a CORS

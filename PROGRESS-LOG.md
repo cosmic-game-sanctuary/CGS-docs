@@ -37,8 +37,8 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 stages done. Foundations, publish, purchase, splits/audit, the wishlist agent, reviews, ENS, and moderation — all built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
-**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS.
+**Stage:** All 8 numbered stages done, plus Stage 9 (profile, library, likes, comments, playtime) on top. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node; likes, comments, and timed play sessions are all real, checked against a live-minted GameKey and live testnet transactions, not mocked.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
 **Next:** deployment, so integration doesn't need a local backend. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
@@ -86,6 +86,10 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | ENS subregistry ownership | Platform deploys and owns one subregistry; studios get a scoped role bitmap on their own subname, not their own registry | Studios can point their own name and renew it; they can't unregister or transfer it away from platform control. Same shape as GameKey treasury staying with the operator. |
 | ENSv2 Sepolia contract addresses | Sourced from docs.ens.domains, cross-checked against a pinned repo commit's interfaces | The two disagreed on addresses (a stale redeploy the repo commit never caught up to); confirmed which was live with a real `isAvailable`/`getRegisterPrice` call rather than trusting either source blind. See `docs/stage-7.md` §1. |
 | Moderation review, who triggers `removed_from_storage` | A CLI script (`scripts/resolve-report.ts`), not an admin route | No admin auth model exists anywhere in this codebase and neither doc describes one. A two-person team reviewing a handful of reports is the same shape as `splits:retry` — an operator runs a script after looking at something, no new infrastructure invented for it. |
+| Likes, comments, playtime | Built after all, reversing the original "deliberately not building" cut | That cut was made under time uncertainty; time stopped being the constraint, so the cut no longer applies. `plays`/`likeCount` are computed live from real rows, not a stored counter — see `docs/stage-9.md`. |
+| `plays`/`likeCount` storage | Computed at read time (batched, like `rating`), not a stored column | A stored counter can drift from what actually happened; a live count over the real rows can't. Cheap at this catalog's scale. |
+| Likes uniqueness | A real DB unique index on `(game_id, user_id)`, not just an app-level check | A race (double-click, two tabs) gets rejected by Postgres itself instead of silently producing two "liked" rows. |
+| Session end reliability | No heartbeat, no guaranteed end call | A session with no end call still counts once toward `plays`; it just earns no duration. Simpler and more honest than guessing a duration for a tab that just disappeared. |
 
 ### Frontend, where it reaches the contract
 
@@ -123,6 +127,14 @@ GET   /api/games/:id/owned
 GET   /api/games/:id/reviews
 POST  /api/games/:id/reviews     ownership-gated
 PATCH /api/reviews/:id
+POST  /api/games/:id/like        toggle, no ownership gate
+GET   /api/games/:id/comments
+POST  /api/games/:id/comments    no ownership gate, unlike reviews
+PATCH /api/comments/:id
+POST  /api/games/:id/sessions    call when play actually starts
+PATCH /api/games/:id/sessions/:id  call when play ends
+GET   /api/me                    identity, wallet balance, your studio
+GET   /api/me/library            every game you actually hold a key for
 POST  /api/agents                returns a wallet address to fund
 GET   /api/agents/:id
 POST  /api/reports
@@ -274,5 +286,19 @@ Also closed a real gap from Stage 7: the deployed subregistry's address only exi
 **Tested for real:** a synthetic game went through all three report resolutions with real Pinata pins — confirmed the unpinned CIDs are genuinely gone by querying Pinata directly afterward, not just trusting the function returned. Also caught and fixed a real bug along the way: `db/client.ts` depended on import order to have `dotenv` loaded already, which broke the moment a standalone script imported it first (`SASL: client password must be a string` — a confusing error for a missing env var). Fixed at the source.
 
 **Needs from you:** nothing blocking. All 8 stages are done — next is deployment, so integration doesn't need a local backend on your machine.
+
+**Next:** deployment.
+
+### 2026-09-06 · Backend · Priyanshu (5)
+
+**Shipped:** Stage 9, not one of the original 8 but a real gap and a deliberate reversal. The gap: login, state, and studio creation were already fully built, but nothing ever told the frontend who it was or what it owned in bulk. `GET /api/me` (identity, live wallet balance, which studio you own or belong to) and `GET /api/me/library` (every game you actually hold a key for, checked live against the Mirror Node in one call rather than one per game) close that. `resolveHederaAccount` — documented since Stage 1, never once called — is now real and caches `hedera_account_id` on first resolution. `plays` and `likeCount` have been in the API shape and in your own `types.ts` since Stage 1; nothing ever computed them until now, batched the same way `rating` already is.
+
+The reversal: likes, comments, and timed play sessions, all cut in the original brief for time reasons that don't apply any more. Likes are a toggle with a real DB unique constraint, not just an app-level check. Comments are unrestricted (no ownership gate, no rating) unlike reviews, on purpose — that's the whole reason both exist. Play sessions start when a boot actually happens (re-checked server-side against ownership, the same branch logic `/download` already uses) and end on an explicit call; a session that never gets one still counts once toward `plays`, it just earns no duration. `GET /api/me/library` sums a user's own sessions per game into `myPlayCount`/`myPlaytimeSeconds` — the concrete answer to "how much have I played this."
+
+**Changes the contract:** six new endpoints, listed above. `Game` gains real `plays`/`likeCount` and (signed in) `liked`. `INTEGRATION.md` §6 has the full shapes and the one thing that matters for your code: call `POST .../sessions` right when the player actually boots, not before, and don't worry about the end call always firing.
+
+**Tested for real:** a genuine fresh EVM address, funded via a real Hedera transfer to trigger auto-account-creation, holding a real GameKey minted through the actual production `fulfilPurchase` path — then `resolveHederaAccount` and the new bulk NFT lookup were both confirmed against that real account and a real Mirror Node query, not a fixture. Play session duration, the plays/likes/comments CRUD, and the DB-level unique constraint on likes were all exercised against live Neon with real inserts, edits, and a genuine duplicate-key rejection. Every new `requireAuth` route correctly 401s with no or a garbage token, same as every prior stage's own test log.
+
+**Needs from you:** nothing blocking.
 
 **Next:** deployment.
