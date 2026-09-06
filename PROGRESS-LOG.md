@@ -37,11 +37,11 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** Stages 1–7 done. Foundations, publish, purchase, splits/audit, the wishlist agent, reviews, and ENS — all built and verified on live Neon, Hedera testnet, Blocky402, and Sepolia. No route returns `501`.
-**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. Separately, and just as real: an agent with its own wallet and its own on-chain identity watches the public listings topic, sees a game publish, and buys it with no human present — verified by checking its balance and its GameKey on the Mirror Node afterward, not by trusting our own status field. Also real: a subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, and studio subnames mintable underneath.
+**Stage:** All 8 stages done. Foundations, publish, purchase, splits/audit, the wishlist agent, reviews, ENS, and moderation — all built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
-**Next:** Stage 8 (moderation) — the last numbered stage. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
+**Next:** deployment, so integration doesn't need a local backend. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -85,6 +85,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Privy wallet public key | Derived from a real signature, not read from the API | `Wallet.public_key` is empty in practice on both `create()` and `get()`, despite the type marking it optional. A `secp256k1_sign` response carries a recovery byte, which makes the key recoverable from one real signature. Verified across four trials. |
 | ENS subregistry ownership | Platform deploys and owns one subregistry; studios get a scoped role bitmap on their own subname, not their own registry | Studios can point their own name and renew it; they can't unregister or transfer it away from platform control. Same shape as GameKey treasury staying with the operator. |
 | ENSv2 Sepolia contract addresses | Sourced from docs.ens.domains, cross-checked against a pinned repo commit's interfaces | The two disagreed on addresses (a stale redeploy the repo commit never caught up to); confirmed which was live with a real `isAvailable`/`getRegisterPrice` call rather than trusting either source blind. See `docs/stage-7.md` §1. |
+| Moderation review, who triggers `removed_from_storage` | A CLI script (`scripts/resolve-report.ts`), not an admin route | No admin auth model exists anywhere in this codebase and neither doc describes one. A two-person team reviewing a handful of reports is the same shape as `splits:retry` — an operator runs a script after looking at something, no new infrastructure invented for it. |
 
 ### Frontend, where it reaches the contract
 
@@ -263,3 +264,15 @@ Two Sepolia sources for contract addresses (docs.ens.domains vs. a pinned repo c
 **Needs from you:** nothing blocking.
 
 **Next:** Stage 8, moderation — the last of the numbered stages.
+
+### 2026-09-06 · Backend · Priyanshu (4)
+
+**Shipped:** Stage 8, moderation — the last numbered stage. `POST /api/reports` already did the immediate delist; what was missing was the human-review half: a report can resolve as a false alarm (restores the game to `published`), a confirmed delist (no change), or `removed_from_storage` (unpins the game's build/cover/media from IPFS for real, sets `status = removed` — the one case that actually ends an owner's access). No admin route exists for this and none was needed — a person on the team resolves a report via `scripts/resolve-report.ts`, same shape as the existing `splits:retry` script.
+
+Also closed a real gap from Stage 7: the deployed subregistry's address only existed in test output, so nothing running could actually mint a studio subname. `POST /api/studios` now mints a real ENS subname before inserting the studio row, and the availability check is a live simulated call against the subregistry, not the old DB-only stand-in.
+
+**Tested for real:** a synthetic game went through all three report resolutions with real Pinata pins — confirmed the unpinned CIDs are genuinely gone by querying Pinata directly afterward, not just trusting the function returned. Also caught and fixed a real bug along the way: `db/client.ts` depended on import order to have `dotenv` loaded already, which broke the moment a standalone script imported it first (`SASL: client password must be a string` — a confusing error for a missing env var). Fixed at the source.
+
+**Needs from you:** nothing blocking. All 8 stages are done — next is deployment, so integration doesn't need a local backend on your machine.
+
+**Next:** deployment.
