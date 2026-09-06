@@ -37,11 +37,11 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** Stages 1–6 done. Foundations, publish, purchase, splits/audit, the wishlist agent, and reviews — all built and verified on live Neon, Hedera testnet and Blocky402. No route returns `501`.
-**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. Separately, and just as real: an agent with its own wallet and its own on-chain identity watches the public listings topic, sees a game publish, and buys it with no human present — verified by checking its balance and its GameKey on the Mirror Node afterward, not by trusting our own status field.
+**Stage:** Stages 1–7 done. Foundations, publish, purchase, splits/audit, the wishlist agent, reviews, and ENS — all built and verified on live Neon, Hedera testnet, Blocky402, and Sepolia. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. Separately, and just as real: an agent with its own wallet and its own on-chain identity watches the public listings topic, sees a game publish, and buys it with no human present — verified by checking its balance and its GameKey on the Mirror Node afterward, not by trusting our own status field. Also real: a subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, and studio subnames mintable underneath.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
-**Next:** Stage 7 (ENS) — needs a Sepolia RPC endpoint and a funded Sepolia wallet from Priyanshu first, or Stage 8 (moderation), independent either way. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
+**Next:** Stage 8 (moderation) — the last numbered stage. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -83,6 +83,8 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Agent identity (HCS-14) | Hand-implemented, not `@hashgraphonline/standards-sdk` | The install never finished in 4+ minutes. The AID variant's own spec allows offline derivation from public inputs — no SDK needed, just SHA-384 + Base58. See `docs/stage-5.md` §1. |
 | Agent + buyer payment signing | One shared function, `payForGame()` | Both consume our own x402 route as a real client would; the agent uses its own wallet, a logged-in buyer's `/pay` call uses theirs. Same code path on purpose. |
 | Privy wallet public key | Derived from a real signature, not read from the API | `Wallet.public_key` is empty in practice on both `create()` and `get()`, despite the type marking it optional. A `secp256k1_sign` response carries a recovery byte, which makes the key recoverable from one real signature. Verified across four trials. |
+| ENS subregistry ownership | Platform deploys and owns one subregistry; studios get a scoped role bitmap on their own subname, not their own registry | Studios can point their own name and renew it; they can't unregister or transfer it away from platform control. Same shape as GameKey treasury staying with the operator. |
+| ENSv2 Sepolia contract addresses | Sourced from docs.ens.domains, cross-checked against a pinned repo commit's interfaces | The two disagreed on addresses (a stale redeploy the repo commit never caught up to); confirmed which was live with a real `isAvailable`/`getRegisterPrice` call rather than trusting either source blind. See `docs/stage-7.md` §1. |
 
 ### Frontend, where it reaches the contract
 
@@ -249,3 +251,15 @@ Three real bugs, all caught by testing the actual path rather than trusting a ty
 **Needs from you:** nothing blocking. Before Stage 7 (ENS) starts: a Sepolia RPC endpoint (a free Alchemy/Infura key works) and a funded Sepolia wallet — I'll confirm exactly what's needed when I get there.
 
 **Next:** Stage 7 or 8, independent of each other.
+
+### 2026-09-06 · Backend · Priyanshu (3)
+
+**Shipped:** Stage 7, ENS on Sepolia. A subregistry we own outright (deployed via `VerifiableFactory`), the parent name `cgs-sanctuary.eth` registered through the real commit-reveal flow (paid in self-minted test USDC, not ETH), and studio subname minting with a limited role set — a studio can point its own name and renew it, not unregister or transfer it away from platform control.
+
+Two Sepolia sources for contract addresses (docs.ens.domains vs. a pinned repo commit) flatly disagreed — both had real bytecode. Resolved by calling `isAvailable`/`getRegisterPrice` directly and trusting whichever address actually returned a sane answer, not whichever source looked more official. Details in the private stage doc.
+
+**Tested for real:** every step ran as a real Sepolia transaction — subregistry deployed, name registered (confirmed `isAvailable` flipped to `false` afterward), a studio subname minted to a real address with a checked `status: 0x1` receipt. Whole flow cost under 0.0008 ETH.
+
+**Needs from you:** nothing blocking.
+
+**Next:** Stage 8, moderation — the last of the numbered stages.
