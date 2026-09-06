@@ -37,11 +37,11 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All five stages done. Foundations, publish, purchase, splits/audit, and the wishlist agent — all built and verified on live Neon, Hedera testnet and Blocky402. No route returns `501`.
+**Stage:** Stages 1–6 done. Foundations, publish, purchase, splits/audit, the wishlist agent, and reviews — all built and verified on live Neon, Hedera testnet and Blocky402. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. Separately, and just as real: an agent with its own wallet and its own on-chain identity watches the public listings topic, sees a game publish, and buys it with no human present — verified by checking its balance and its GameKey on the Mirror Node afterward, not by trusting our own status field.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
-**Next:** deployment (nothing left to build that blocks it), or reviews/ENS/moderation (Stages 6–8, independent of each other). Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
+**Next:** Stage 7 (ENS) — needs a Sepolia RPC endpoint and a funded Sepolia wallet from Priyanshu first, or Stage 8 (moderation), independent either way. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
 
 ---
 
@@ -103,7 +103,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 
 **Full integration guide, including who does what and the suggested order: [INTEGRATION.md](INTEGRATION.md).** Read that one before starting; this is the summary.
 
-Every endpoint below is live and tested against real Neon + Hedera testnet. Nothing returns `501` any more.
+Every endpoint below is live and tested against real Neon + Hedera testnet. Nothing returns `501` any more. Reviews now carry `author` (truncated address) and `authorIsEns` (always `false` until ENS lands).
 
 ```
 GET   /api/games                 catalog: search, tag, sort, freeOnly, cursor
@@ -239,3 +239,13 @@ Three real bugs, all caught by testing the actual path rather than trusting a ty
 **Needs from you:** nothing blocking.
 
 **Next:** deployment, so integration doesn't need a local backend on your machine. Otherwise Stages 6–8 (reviews' live ownership check, ENS subnames, moderation actions) — independent of each other, pick any order.
+
+### 2026-09-06 · Backend · Priyanshu (2)
+
+**Shipped:** Stage 6, reviews. The ownership gate and edit flow were already correct from Stage 1 — what was missing was `author`/`authorIsEns` on each review in the list, which the frontend type needs and the API never sent. Fixed with a truncated-address fallback; real ENS names wait for Stage 7.
+
+**Tested for real:** minted a GameKey to a real account, confirmed `ownsGame()` says yes for the actual holder and no for an address that was never funded — this exact function gates every review post and hadn't been called directly in a test before, only indirectly through routes that reject bad tokens. Posted, listed, and edited a review against that real ownership state.
+
+**Needs from you:** nothing blocking. Before Stage 7 (ENS) starts: a Sepolia RPC endpoint (a free Alchemy/Infura key works) and a funded Sepolia wallet — I'll confirm exactly what's needed when I get there.
+
+**Next:** Stage 7 or 8, independent of each other.
