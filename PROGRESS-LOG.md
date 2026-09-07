@@ -56,7 +56,7 @@ Only things stopping work right now.
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 | Both | Email only reaches one address | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. |
-| Suparno | Three published games have no retrievable build | 2026-09-07 | **`npm run builds:backfill` in `CGS-server`, on the machine that published them.** Full steps below. They predate `build_zip_cid`, so their zips exist only on that disk. Alternatively `npm run game:delist -- <slug>` hides a listing without deleting the sales behind it. |
+| Suparno | Three published games have no retrievable build | 2026-09-07 | **`npm run builds:backfill` in `CGS-server`, on the machine that published them.** That is the only command needed — `game:delist` is a separate, optional tool for hiding a listing and is not part of this. Full steps below. They predate `build_zip_cid`, so their zips exist only on that disk. Alternatively `npm run game:delist -- <slug>` hides a listing without deleting the sales behind it. |
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
@@ -494,3 +494,21 @@ Both sides are told now, too: a notification and an email when a share is held, 
 **Also corrected the docs:** both `CLAUDE.md` files listed `@hashgraphonline/standards-sdk` in the stack. It was never installed — HCS-14 is hand-implemented, because the install never finished and the spec allows offline derivation. The `ipfs.io` references went with it.
 
 **Next:** the wishlist agent. It's the last unbuilt piece and the one the Hedera track is about.
+
+### 2026-09-07 · Backend · Priyanshu (5)
+
+**Shipped:** a memo on withdrawals, and one finding that changes the funding story.
+
+**A new wallet does not need HBAR.** The assumption baked into the faucet and the funding copy was that HBAR has to arrive first because it is what opens the Hedera account. That is wrong: **HIP-542 charges the account-creation fee to the sender rather than deducting it from what is sent**, so a token transfer creates the account by itself. Verified on testnet by sending only USDC to an untouched address — the account came into existence holding the USDC and **zero HBAR**.
+
+So the funding hint is now just "send USDC here", and nobody has to go and find HBAR before they can start. Confirmed independently from a real wallet as well.
+
+**Worth knowing before pointing anyone at a funding route:** not every wallet can send to an EVM address. HashPack can. **Circle's testnet faucet cannot** — it requires a `0.0.x`, so it is only usable once an account already exists. Exchanges generally reject EVM addresses too. After the first transfer the account has a `0.0.x` and none of that matters any more.
+
+**Changes the contract:** `POST /api/me/withdraw/prepare` takes an optional `memo`. Exchange deposit addresses are pooled accounts that identify the depositor by memo, the same as an XRP tag, so a withdrawal to one without a memo is credited to nobody. Any off-ramp UI has to offer the field.
+
+**Also:** schema for the wishlist agent landed (migration 0008 — new statuses, a shared listener cursor, two indexes) but **no agent code was written and nothing reads those columns**. The existing watcher is untouched and behaves exactly as before. The agent is on hold pending a design conversation.
+
+**One thing that has no answer yet:** there is still no way for a developer to edit, reprice, unpublish or delist their own game. The only writes to a game's status anywhere are moderation and an operator script. That is the gap the agent work would have opened first.
+
+**Next:** agent design discussion.

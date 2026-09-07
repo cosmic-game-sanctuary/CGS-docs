@@ -303,7 +303,7 @@ and freezes the transfer because that needs a Hedera client, and the browser
 signs because the key is the person's. Reuse `useWalletSigner`.
 
 ```http
-POST /api/me/withdraw/prepare    requireAuth   { to, asset?, amountUnits? }
+POST /api/me/withdraw/prepare    requireAuth   { to, asset?, amountUnits?, memo? }
 ```
 `to` is **either** a Hedera account id (`0.0.x`) **or** an EVM address —
 someone copying an address out of their own wallet has no reason to know which
@@ -327,6 +327,11 @@ Returns `{ status: "sent", transactionId, to, asset, amountUnits }`.
 because otherwise a wallet holding only USDC would be a wallet you cannot
 empty. Verified on testnet: the full balance leaves and the sender's HBAR is
 untouched.
+
+**`memo` matters for any off-ramp.** Exchange deposit addresses are pooled
+accounts that identify the depositor by memo, the same mechanic as an XRP tag.
+Sending to one without it means the money is credited to nobody. If a withdraw
+UI ever points at an exchange, it has to offer this field.
 
 Two failures worth handling by name, both arriving as `VALIDATION_FAILED` with
 the field in `details`: `to` when the destination has no Hedera account yet, or
@@ -373,6 +378,24 @@ Every money value is `{ units, display, assetDecimals }`. `units` is the truth;
 has no Hedera account yet) is held, and it goes out the moment that account
 first appears — triggered on `GET /api/me`, so simply opening the site is what
 releases it. You don't need a "claim" button and shouldn't build one.
+
+### Funding a new wallet: no HBAR step
+
+A Hedera account doesn't exist until value first lands on the address, but
+**a token transfer creates it too** — HIP-542 charges the creation fee to the
+sender rather than deducting it from what's sent. Verified on testnet by
+sending only USDC to an untouched address: the account was created holding the
+USDC and **zero HBAR**.
+
+So the funding hint is simply "send USDC here". Nobody has to acquire HBAR
+first, and the profile menu says so.
+
+One caveat worth knowing before pointing anyone at a funding route: **not every
+wallet can send to an EVM address.** HashPack can, and it works. Circle's
+testnet faucet cannot — it requires a `0.0.x`, so it's only usable once the
+account already exists. Exchanges generally reject EVM addresses outright.
+After the first transfer the account has a `0.0.x` and all of that stops
+mattering.
 
 ### `/api/me` also gains `studios`
 
