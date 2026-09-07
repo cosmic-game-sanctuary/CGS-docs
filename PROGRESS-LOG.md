@@ -635,3 +635,25 @@ needed. New notification type `review_reply`.
 
 **Next:** reports on reviews/comments (currently only games can be reported),
 and telling a reporter what happened to their report.
+
+### 2026-09-07 (7) · Backend · Priyanshu
+
+**Shipped:** reviews and comments can be reported (`POST
+/api/reports/content`), and reporters now learn the outcome — for both this
+new path and the existing game-report path. Deliberately **no auto-hide** on a
+content report, unlike a game report's immediate delist: hiding a review on
+one report would let any developer silence honest criticism of their own game
+with a click. It only queues for a human; `npm run reports:content` resolves
+one, same shape as the existing `reports:` script.
+
+**Changes the contract:** INTEGRATION.md §16. New notification type
+`report_resolved`, fired on **both** report paths now — if your client
+already renders `POST /api/reports`'s existing behavior, nothing there
+changed; this only adds a notification neither of you had before.
+
+**Needs from you:** nothing yet.
+
+**Next:** this closes out the trust-and-safety and studio-management gaps from
+the product review. Remaining open ones are bigger product decisions —
+devlogs/following (discovery), collections/curated browsing — worth discussing
+before building rather than assuming.

@@ -127,6 +127,7 @@ POST   /api/me/withdraw/complete        sign it in the browser, server submits
 GET    /api/notifications
 POST   /api/notifications/:id/read
 POST   /api/reports
+POST   /api/reports/content             report a review or comment — see §16
 GET    /health
 ```
 
@@ -924,3 +925,40 @@ they can remove spam or abuse under their own listing without a global
 moderator. There's no equivalent on reviews: those are gated by real
 ownership already, and a developer silencing criticism of their own game is
 a different thing from removing an off-topic comment.
+
+---
+
+## 16. Reporting reviews and comments
+
+`POST /api/reports` (games) already existed. This is the same idea for the two
+surfaces it can't cover:
+
+```
+POST /api/reports/content
+{ "targetType": "review" | "comment", "targetId": "…", "reason": "…" }
+```
+
+**It does nothing automatically.** A game report delists on submission because
+a false positive there is cheap to undo; hiding a review the instant it's
+reported would hand any developer a one-click way to silence honest criticism
+of their own game, so this only queues the report for a human. Nothing about
+the review or comment changes until someone resolves it.
+
+Refuses reporting your own review or comment, and `404`s on a target that
+doesn't exist.
+
+### Learning what happened
+
+Both this and the original game-report path now notify the reporter when
+their report is resolved — a `report_resolved` notification either way, not
+only when something was removed:
+
+```json
+{ "type": "report_resolved",
+  "payload": { "reportKind": "review", "targetId": "…",
+               "gameId": "…", "slug": "…", "title": "…", "action": "removed" } }
+```
+
+`reportKind` is `"game"`, `"review"`, or `"comment"`. `action` is `"none"` or
+`"removed"` for content, or the game-report actions (`"none"`, `"delisted"`,
+`"removed_from_storage"`) for a game.
