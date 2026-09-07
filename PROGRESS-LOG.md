@@ -51,7 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** the wishlist agent, on hold pending a design call. Bigger product decisions left open on purpose — devlogs/following, curated browsing — worth discussing before building rather than assuming.
+**Next:** not engineering. Deploy is the biggest gap and nothing blocks it. The agent is an open design question rather than a build task — four designs were considered and rejected, so it is deliberately unscheduled. Devlogs/following and curated browsing stay open on purpose.
 
 ---
 
@@ -667,3 +667,50 @@ before building rather than assuming.
 **Needs from you:** nothing blocking. Two notes. A first-ever sign-in can still briefly report no embedded wallet — Privy's own API does that for a moment after creating one — and the client now re-reads `/api/me` the instant Privy says the wallet exists rather than guessing with retries, so the message clears itself. And one payment failed once and succeeded on retry with nothing charged; I could not reproduce it and have not guessed at a fix. My suspicion is Mirror Node lag on a wallet funded seconds earlier, where `payerFor` correctly refuses rather than inventing an account.
 
 **Next:** `/invite/:id` against the real endpoints, which is also what settles the held payouts, then the agent.
+
+### 2026-09-08 · Backend · Priyanshu
+
+**Shipped:** an audit pass rather than a feature. Pulled and verified all three
+repos against each other, fixed one real inconsistency, and pruned the docs.
+
+**The one bug, and it was mine.** `GET /api/games/:id/price-history` added
+`fromUsd`/`toUsd` to every row and `GET /api/games/:id/manage` returned the raw
+rows without them — the same data in two shapes depending on which endpoint you
+asked. That is what cost Suparno an hour on a blank manage screen. The display
+pair is now produced once, in the service, so both endpoints return identical
+rows. **INTEGRATION.md §10 now shows the row shape**, which is what he asked
+for.
+
+**Verified, not assumed:** every API path the client calls was extracted and
+diffed against every route the server serves — 72 routes, all matching. Profile,
+demand, builds and price-history payloads were checked field-by-field against
+the client's types. Suparno's `UNIT_FIELDS` change is complete: it covers
+exactly the money fields the payout and price-drop payloads emit, nothing
+missed. Client builds clean, server typechecks clean, every public endpoint
+`200`s and every protected one `401`s.
+
+**One thing to fix on the frontend, and it can lose someone's save.** In
+`cloudSaves.ts`, `pullSave` returns `{}` on *any* failure, and `pushSave` reads
+a missing `baseVersion` as "overwrite, I know". That conflates *no save exists*
+(safe to write) with *couldn't read the save* (a blind write destroys a newer
+one). Same path if the game closes before the async pull resolves, since
+`GameStage` starts with `holder.session = {}`. Distinguishing the two cases
+fixes both.
+
+**Also confirmed, not fixed:** the payment that failed once and worked on retry
+is Mirror Node lag, exactly as suspected — `payerFor` asks the mirror for an
+account that was funded seconds earlier, gets a 404, and returns
+`WALLET_NOT_FUNDED`. It fails *safe*, nothing is charged, but the message is
+wrong for someone who just funded their wallet. A short retry before concluding
+"not funded" is the fix. Deliberately left alone while the payment path is
+being tested.
+
+**Docs:** the private folder was pruned — four documents deleted because each
+had been overtaken by a real source of truth (endpoints by INTEGRATION.md, the
+data model by `schema.ts`, config by `.env.example`, gotchas by the server's
+own working rules). Nothing in this repo lost anything; the stage write-ups are
+all intact.
+
+**Needs from you:** the cloud-save fix above. Nothing else.
+
+**Next:** deploy is the largest remaining gap and no code blocks it.

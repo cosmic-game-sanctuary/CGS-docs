@@ -126,8 +126,10 @@ POST   /api/me/withdraw/prepare         build a transfer out of the wallet — s
 POST   /api/me/withdraw/complete        sign it in the browser, server submits
 GET    /api/notifications
 POST   /api/notifications/:id/read
+POST   /api/notifications/read-all      one request, not one per row
 POST   /api/reports
 POST   /api/reports/content             report a review or comment — see §16
+POST   /api/dev/faucet                  dev only, 404s unless DEV_FAUCET=on
 GET    /health
 ```
 
