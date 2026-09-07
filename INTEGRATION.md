@@ -81,6 +81,9 @@ GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated
 PATCH  /api/reviews/:id
+DELETE /api/reviews/:id                 the reviewer only — see §15
+POST   /api/reviews/:id/reply           the developer's reply — see §15
+DELETE /api/reviews/:id/reply
 POST   /api/games/:id/like              toggle — see §12
 POST   /api/games/:id/wishlist          add (idempotent) — see §12
 DELETE /api/games/:id/wishlist          remove
@@ -89,6 +92,7 @@ GET    /api/me/wishlist                 your list, with what changed — see §1
 GET    /api/games/:id/comments
 POST   /api/games/:id/comments          no ownership gate — see §6
 PATCH  /api/comments/:id
+DELETE /api/comments/:id                the author, or the game's manager — see §15
 GET    /api/games/:id/saves             cloud saves — see §13
 GET    /api/games/:id/saves/:slot
 PUT    /api/games/:id/saves/:slot
@@ -891,3 +895,32 @@ almost everything else. The target has to already be an accepted, active
 member. After transfer, `studios.owner_user_id` is the new person and their
 role is set to `owner` (manager); the old founder keeps their existing role and
 is now just a manager like anyone else — including being able to leave.
+
+---
+
+## 15. Developer replies, and taking your own words back
+
+**A developer can reply to a review**, once, from the studio:
+
+```
+POST   /api/reviews/:id/reply    { "body": "…" }    manager-gated
+DELETE /api/reviews/:id/reply                        clears it
+```
+
+The reply lands as `developerReply` / `developerReplyAt` on every review row
+`GET /api/games/:id/reviews` already returns — no new field to fetch. Posting
+again overwrites; there's no thread. The reviewer gets a `review_reply`
+notification on the *first* reply only, not on an edit of it.
+
+**Reviews and comments can be deleted:**
+
+```
+DELETE /api/reviews/:id      the reviewer only
+DELETE /api/comments/:id     the author, or a manager of the game's studio
+```
+
+The second path on comments is moderation-lite for a developer's own page —
+they can remove spam or abuse under their own listing without a global
+moderator. There's no equivalent on reviews: those are gated by real
+ownership already, and a developer silencing criticism of their own game is
+a different thing from removing an off-topic comment.

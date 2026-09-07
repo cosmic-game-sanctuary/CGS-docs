@@ -619,3 +619,19 @@ route today, so nothing existing changes behavior.
 
 **Next:** review replies (developer voice) and comment deletion, then reports
 on reviews/comments and telling a reporter what happened to their report.
+
+### 2026-09-07 (6) · Backend · Priyanshu
+
+**Shipped:** developer replies to reviews (one per review, from the studio,
+`POST`/`DELETE /api/reviews/:id/reply`), and delete for both reviews (the
+reviewer only) and comments (the author, or a manager of the game's studio —
+moderation-lite for a developer's own page).
+
+**Changes the contract:** INTEGRATION.md §15. `developerReply` /
+`developerReplyAt` ride along on the existing review shape — no new fetch
+needed. New notification type `review_reply`.
+
+**Needs from you:** nothing yet, no frontend screen touches this today.
+
+**Next:** reports on reviews/comments (currently only games can be reported),
+and telling a reporter what happened to their report.
