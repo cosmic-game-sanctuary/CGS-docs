@@ -571,11 +571,32 @@ notes. Both optional, both shown as-is.
 
 ### Price history
 
-`GET /api/games/:id/price-history` — public, slug or id. Returns `currentUnits`,
-`lowestEverUnits`, and a newest-first `history` where **every row carries the
-HCS transaction that announced it**. That's worth building a real UI for: it's
-a price history a visitor can verify on the Mirror Node without trusting us,
-which is not something any other storefront can offer.
+`GET /api/games/:id/price-history` — public, slug or id:
+
+```json
+{ "currentUnits": 250000, "currentUsd": 0.25,
+  "asset": "0.0.429274", "assetDecimals": 6,
+  "lowestEverUnits": 250000,
+  "history": [
+    { "fromUnits": 500000, "toUnits": 250000,
+      "fromUsd": 0.5,     "toUsd": 0.25,
+      "asset": "0.0.429274", "assetDecimals": 6,
+      "at": "2026-09-07T18:22:11.402Z",
+      "hcsTxId": "0.0.10375438@1788784716.529183364",
+      "topicId": "0.0.10380868" } ] }
+```
+
+Newest first. **A row describes a change, not a price** — there is no
+`priceUnits`/`priceUsd` on it, only the `from`/`to` pair. Render the movement.
+
+The exact same row shape appears as `priceHistory` inside
+`GET /api/games/:id/manage`, so one component can render both.
+
+`hcsTxId` is the point: **every row names the HCS message that announced it**,
+so a visitor can verify the whole history on the Mirror Node without trusting
+us. No other storefront can offer that, because they all own the database their
+price history lives in. `hcsTxId` is `null` only when an announcement failed and
+`npm run listings:retry` hasn't caught up yet.
 
 ### Unlisting
 
