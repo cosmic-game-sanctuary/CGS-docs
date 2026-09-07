@@ -81,7 +81,11 @@ GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated
 PATCH  /api/reviews/:id
-POST   /api/games/:id/like              toggle — see §6
+POST   /api/games/:id/like              toggle — see §12
+POST   /api/games/:id/wishlist          add (idempotent) — see §12
+DELETE /api/games/:id/wishlist          remove
+GET    /api/games/:id/demand            public wishlist count — see §12
+GET    /api/me/wishlist                 your list, with what changed — see §12
 GET    /api/games/:id/comments
 POST   /api/games/:id/comments          no ownership gate — see §6
 PATCH  /api/comments/:id
@@ -683,3 +687,79 @@ splits and paid from the first sale regardless.
 `500` for one — so `/api/games/deadzone/reviews` was a server error while
 `/api/games/deadzone` worked. Both work now, and an unknown game returns `404`
 where reviews and comments previously returned an empty list.
+
+---
+
+## 12. The wishlist
+
+`likes` is the wishlist now. **Nothing breaks** — every response still carries
+`liked` and `likeCount`, and `POST /api/games/:id/like` still toggles exactly as
+it did. What is new sits beside them.
+
+Every response from all three routes has the same body:
+
+```json
+{ "wishlisted": true, "wishlistCount": 12, "liked": true, "likeCount": 12 }
+```
+
+`POST /api/games/:id/wishlist` adds (201 the first time, 200 after — adding
+twice is not an error). `DELETE /api/games/:id/wishlist` removes. Prefer these
+over the toggle for a button that says "on your wishlist": a toggle undoes
+itself on a double click.
+
+### The list
+
+`GET /api/me/wishlist`:
+
+```json
+{ "onSale": 2,
+  "items": [ { "addedAt": "…", "notifyOnDrop": true,
+               "game": { "id": "…", "slug": "…", "title": "…", "coverUrl": "…",
+                         "studio": { … }, "priceUnits": 250000, "priceUsd": 0.25 },
+               "savedAtUnits": 500000, "savedAtUsd": 0.5,
+               "changeUnits": -250000, "percentOff": 50,
+               "stillForSale": true,
+               "agent": { "id": "…", "status": "watching",
+                          "triggerPriceUnits": 300000 } } ] }
+```
+
+`percentOff` is the headline — it's the price now against what it cost when
+they saved it, which is the comparison a wishlist exists to make. `onSale` is
+the count of items with `percentOff > 0`, so a "3 games on your list are
+cheaper" banner needs no client-side arithmetic.
+
+`stillForSale: false` means the game was unlisted. It stays on the list on
+purpose — someone who saved it should learn what happened to it rather than find
+a gap. Only a `removed` game disappears.
+
+`agent` is non-null when this person has a wishlist agent watching this game.
+Where there isn't one, that's the natural place to offer setting one up: the
+agent is the paid upgrade of the free thing, not a separate feature. Creating an
+agent now also adds the game to the wishlist.
+
+### Price drops
+
+Lowering a game's price notifies and emails everyone who has it wishlisted,
+except people who already own it and people who muted that row. The notification
+type is `price_drop` and its payload carries `fromUnits`, `priceUnits`,
+`savedAtUnits` and `percentOff` (plus the `…Usd` versions, like every other
+notification).
+
+### Public demand — worth building something for
+
+`GET /api/games/:id/demand` (public, slug or id):
+
+```json
+{ "gameId": "…", "wishlistCount": 12, "announcedMilestone": 10,
+  "topicId": "0.0.10380868" }
+```
+
+Every time the count crosses a milestone (1, 5, 10, 25, 50, 100…) it is written
+to the public HCS listings topic. Wishlist counts are private platform data on
+every other storefront — it's one of the things Steam won't give away. Here
+anyone can verify the number on the Mirror Node. That's a real differentiator
+and it currently has no UI at all.
+
+The developer's own view (`GET /api/games/:id/manage`) gains
+`stats.wishlisted` — how many people are waiting, which is the number that
+decides whether a discount is worth running.

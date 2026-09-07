@@ -557,3 +557,25 @@ than reimplementing the name fallback.
 avatars, and a receipts list.
 
 **Next:** the wishlist, then cloud saves.
+
+### 2026-09-07 (3) · Backend · Priyanshu
+
+**Shipped:** the wishlist. `likes` is it now — same rows, given a purpose. Each
+one remembers the price when it was saved, so the list can say "50% off since
+you saved it". Dropping a price notifies and emails everyone waiting, skipping
+people who already own the game and people who muted it. Wishlist counts go on
+the public HCS topic at milestones, which no other storefront does. Creating an
+agent also adds the game to your wishlist, so the agent reads as an upgrade of
+the list rather than a separate thing.
+
+**Changes the contract:** INTEGRATION.md §12. **Nothing breaks** — `liked` and
+`likeCount` are still on every response and `POST /:id/like` still toggles.
+New: `POST`/`DELETE /api/games/:id/wishlist`, `GET /api/me/wishlist`,
+`GET /api/games/:id/demand` (public), a `price_drop` notification type, and
+`stats.wishlisted` on the manage view.
+
+**Needs from you:** nothing. `GET /api/games/:id/demand` has no UI at all yet
+and is the most distinctive thing in this batch — a public, verifiable count of
+who is waiting for a game.
+
+**Next:** cloud saves for browser games.
