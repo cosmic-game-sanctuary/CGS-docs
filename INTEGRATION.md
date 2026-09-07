@@ -95,6 +95,12 @@ GET    /api/invites/:id                 public — the emailed link lands here
 POST   /api/invites/:id/accept
 POST   /api/agents                      returns a wallet address to fund
 GET    /api/agents/:id                  status, balance, trigger
+GET    /api/users/:handle               public profile — see §11
+GET    /api/users/handle-availability   ?handle=
+PATCH  /api/me/profile                  display name, handle, bio, library visibility
+POST   /api/me/avatar                   multipart, field `avatar`
+DELETE /api/me/avatar
+GET    /api/me/purchases                receipts, with the settlement tx id
 GET    /api/me                          who you are, wallet balances, your studio — see §6
 GET    /api/me/library                  every game you actually hold a key for — see §6
 GET    /api/me/earnings                 what you've earned, across every studio — see §6.2
@@ -118,7 +124,8 @@ Codes worth branching on: `UNAUTHENTICATED` (401, show sign-in),
 `GAME_NOT_PUBLISHED` (409), `MODERATION_BLOCKED` (422, upload rejected),
 `VALIDATION_FAILED` (422, `details` has the field errors), `RATE_LIMITED` (429),
 `MODERATION_HOLD` (409, a relist that moderation won't allow), `GAME_HAS_SALES`
-and `GAME_IS_WATCHED` (409, why a draft delete was refused).
+and `GAME_IS_WATCHED` (409, why a draft delete was refused), `HANDLE_TAKEN`
+(409, someone else has that handle).
 
 ---
 
@@ -581,3 +588,98 @@ where their money is.
 
 `GET /api/games/:idOrSlug` now returns `status`, `buildVersion`, `updatedAt` and
 `delistedBy` alongside everything it already returned. Nothing was removed.
+
+---
+
+## 11. Profiles
+
+Everyone has a handle and a page at it. This is what the truncated addresses all
+over the site were standing in for.
+
+### Someone else's page
+
+`GET /api/users/:handle` — public, no auth needed, and it never returns an email
+address. Case-insensitive.
+
+```json
+{ "handle": "kai", "displayName": "Kai", "label": "Kai",
+  "bio": "…", "avatarUrl": "https://…", 
+  "address": "0x…", "addressShort": "0x67…aCfD", "hederaAccountId": "0.0.x",
+  "joinedAt": "…", "isSelf": false, "libraryPublic": true,
+  "studios":  [ { "id": "…", "name": "…", "slug": "…", "ens": "…", "role": "owner" } ],
+  "credits":  [ { "gameId": "…", "slug": "…", "title": "…", "coverUrl": "…",
+                  "studio": { … }, "role": "art", "pct": 30 } ],
+  "reviews":  [ { "id": "…", "rating": 5, "body": "…", "game": { … } } ],
+  "library":  [ { "gameId": "…", "slug": "…", "title": "…", "playtimeSeconds": 900 } ],
+  "stats": { "gamesCredited": 3, "gamesOwned": 12, "reviewCount": 4,
+             "wishlistCount": 7, "playCount": 22, "playtimeSeconds": 8140 } }
+```
+
+`label` is the one to print: display name, else handle, else a truncated
+address. Use it everywhere rather than reimplementing the fallback.
+
+**`credits` is the interesting one.** It is every game this person has a share
+of, with the share. Steam names a publisher and itch names an uploader — this
+names everyone who made a thing and proves what each of them is paid. Worth a
+real section on the page rather than a list of links.
+
+`library` is empty and `stats.gamesOwned` is `null` when the person has set
+`libraryPublic: false` (unless it's their own page). Reviews and credits are
+public either way.
+
+### Your own page
+
+```
+PATCH /api/me/profile
+{ "displayName": "Kai", "handle": "kai", "bio": "…", "libraryPublic": true }
+```
+
+All optional. **The handle gets normalised** — lowercased, non-URL-safe
+characters dropped — so "Kai Saha" becomes `kaisaha`. Show the normalised value
+back before saving; `GET /api/users/handle-availability?handle=…` returns
+`{ normalised, available, reason }` where reason is `taken`, `reserved`,
+`unusable`, or null. A `409 HANDLE_TAKEN` on save means someone got there first.
+
+`POST /api/me/avatar` is multipart, field `avatar`, images only, 5MB cap. It
+goes through the same moderation gate as every other uploaded image.
+`DELETE /api/me/avatar` clears it.
+
+`GET /api/me` now also returns `handle`, `displayName`, `label`, `bio`,
+`avatarUrl` and `libraryPublic`, so the header needs no second request.
+
+**Default handles come from the email's local part.** Consider prompting for a
+real one on first visit — `displayName === null` is a reasonable trigger for a
+"finish your profile" step.
+
+### Receipts
+
+`GET /api/me/purchases` — newest first, one row per purchase, each with
+`settlementTxId` (look it up on the Mirror Node), the price paid at the time,
+the game, and the `key` (`tokenId`, `serial`) it minted.
+
+### Authors on reviews and comments
+
+Both lists now carry `authorProfile` alongside the existing `author` string:
+
+```json
+{ "author": "kai", "authorIsEns": false,
+  "authorProfile": { "handle": "kai", "displayName": "Kai",
+                     "avatarUrl": "…", "address": "0x…", "label": "Kai" } }
+```
+
+`author` is unchanged in shape, so nothing breaks — it just says a name now
+instead of `0x0000…0000`.
+
+### Credits on a game
+
+`GET /api/games/:idOrSlug` — each entry in `splits` gains `profile`, the same
+shape as `authorProfile`, or `null` for a collaborator who was invited by email
+and has never signed in. That null is a real state, not a gap: they are on the
+splits and paid from the first sale regardless.
+
+### One fix worth knowing
+
+**Every `/api/games/:id/…` route now accepts a slug.** They used to return
+`500` for one — so `/api/games/deadzone/reviews` was a server error while
+`/api/games/deadzone` worked. Both work now, and an unknown game returns `404`
+where reviews and comments previously returned an empty list.

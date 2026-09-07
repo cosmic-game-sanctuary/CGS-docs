@@ -535,3 +535,25 @@ removed. New error codes: `MODERATION_HOLD`, `GAME_HAS_SALES`, `GAME_IS_WATCHED`
 this unblocks are: edit a game, upload a patch, put it on sale, take it down.
 
 **Next:** profiles and public identity, then the wishlist.
+
+### 2026-09-07 (2) · Backend · Priyanshu
+
+**Shipped:** everyone has a handle and a public page. `GET /api/users/:handle`
+returns their studios, the games they're credited on with their share, their
+reviews, their library and their playtime — no email, ever. Profile editing,
+avatars and `GET /api/me/purchases` (receipts, each with the settlement
+transaction) on the other side. Reviews, comments and game credits now name a
+person instead of a truncated address.
+
+**Changes the contract:** INTEGRATION.md §11. Three things worth knowing:
+`GET /api/me` gains `handle`, `displayName`, `label`, `avatarUrl` and
+`libraryPublic`; reviews/comments gain `authorProfile` and each game split gains
+`profile`; and **every `/api/games/:id/…` route now accepts a slug** — several
+of them used to return `500` for one, so `/api/games/deadzone/reviews` was a
+server error while `/api/games/deadzone` worked. Use `label` for display rather
+than reimplementing the name fallback.
+
+**Needs from you:** nothing. The screens this unblocks are a profile page,
+avatars, and a receipts list.
+
+**Next:** the wishlist, then cloud saves.
