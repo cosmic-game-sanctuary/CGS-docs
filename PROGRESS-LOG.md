@@ -38,12 +38,19 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, plus Stage 9 (profile, library, likes, comments, playtime) on top. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
-**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node; likes, comments, and timed play sessions are all real, checked against a live-minted GameKey and live testnet transactions, not mocked.
-**Also real now:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, and held payouts that settle themselves.
+**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, and Stages 10–16 close out almost everything the product-gap review found. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
+**New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
+- **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
+- **Everyone has a handle and a public profile** — reviews, comments and game credits link to a real person, not a truncated address.
+- **A real wishlist**, not just an agent: price-drop notifications, and a public demand count on HCS at milestones — nobody else exposes that.
+- **Cloud saves** for browser games — 3 slots, checksums, version-conflict detection.
+- **Studio management** — remove/leave/promote/transfer a member, kept strictly separate from the permanent credit ledger so nobody's payout or credit is ever touched by an org-chart change.
+- **Developer replies on reviews**, delete for reviews/comments, and **reports on reviews/comments** — deliberately no auto-hide (unlike a game report), and reporters now learn the outcome either way.
+**Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** closing the product gaps, stage by stage — a game can now be edited, repriced and patched (Stage 10). Profiles, wishlist, cloud saves, studio management and devlogs follow. The wishlist agent is on hold pending a design call.
+**Next:** the wishlist agent, on hold pending a design call. Bigger product decisions left open on purpose — devlogs/following, curated browsing — worth discussing before building rather than assuming.
 
 ---
 

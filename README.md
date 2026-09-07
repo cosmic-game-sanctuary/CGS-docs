@@ -20,15 +20,19 @@ A buyer pays with a wallet they got by logging in with an email. Payment runs ov
 
 Revenue reaches the whole dev team in one atomic transaction. Either everyone gets paid or nobody does, so there's no chasing a teammate for your share.
 
-Separately, a buyer can fund a small dedicated wallet and point an agent at a game. The agent watches the public listings topic through the Mirror Node, and when the price hits the trigger it buys, with no human present. Its spending cap is its balance — it can't overspend what isn't there.
+Anyone can wishlist a game for free — no wallet needed. When a developer drops the price, everyone who saved it is notified, and the wishlist count itself is public on the same consensus topic: real demand a developer can act on, and anyone can verify, without a platform holding that data back as its own.
 
-## Three things that are true in the code, not just the pitch
+For a buyer who wants it automatic, an agent is the paid upgrade: fund a small dedicated wallet and point it at a game. The agent watches the public listings topic through the Mirror Node, and when the price hits the trigger it buys, with no human present. Its spending cap is its balance — it can't overspend what isn't there.
+
+## Things that are true in the code, not just the pitch
 
 **The agent reads the public topic, not our database.** That's the difference between an app with a bot in it and a public action anyone could independently build on.
 
 **Splits can't be changed after publish.** No edit endpoint, no admin override. itch.io's issue for multi-dev payout splits has been open since 2016.
 
 **Delisting doesn't revoke anyone's copy.** GameKey tokens are minted with no wipe key, no freeze key and no pause key. We're structurally unable to take a purchase back, and you can check that on HashScan rather than take our word for it.
+
+**A game's price history is a public topic, not a database we control.** Every change is a timestamped, checkable message. No storefront that owns its own price history can make that claim credibly, because they all control the database it lives in.
 
 ## Repos
 
