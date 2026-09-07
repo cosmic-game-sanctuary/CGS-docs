@@ -714,3 +714,51 @@ all intact.
 **Needs from you:** the cloud-save fix above. Nothing else.
 
 **Next:** deploy is the largest remaining gap and no code blocks it.
+
+### 2026-09-08 (2) · Backend · Priyanshu
+
+**On the `agent` branch of CGS-server, not `main`.** This is the first of four
+stages toward reworking the wishlist agent, and none of it is merged yet —
+`main` is untouched and still in sync across all three repos.
+
+**Shipped: sales are a real thing.** A promotion is a sale price, a start, an
+end, and an **automatic revert** — the developer never has to remember to change
+the price back, which is most of why sales barely happened. Scheduled or
+immediate, extendable, cancellable, with full history.
+
+Everything routes through the existing `changePrice`, so a sale produces the
+same price-history row, the same HCS message and the same `price_drop`
+notifications a manual change does. A sale is not a special kind of price, it's
+a *scheduled* price.
+
+**Changes the contract:** INTEGRATION.md §17. Two things that will bite
+otherwise:
+
+- **`PATCH /api/games/:id` with `priceUnits` now returns `409
+  PROMOTION_ACTIVE` while a sale is running.** The sale owns the price until it
+  ends; editing underneath it would be silently undone at `endsAt`. The error
+  carries `promotionId` and `endsAt` so you can send the person to the sale.
+- **`GET /api/games/:idOrSlug` gains `promotion`** — the running sale or `null`.
+  Worth a countdown: a discount with a visible deadline is a different thing
+  from a cheap game.
+
+New error codes `PROMOTION_EXISTS` and `PROMOTION_ACTIVE`.
+
+**The part that matters beyond sales:** both the start *and* the end of every
+sale go on the public HCS topic, and **the message carries `endsAt`**. That's
+the piece the whole agent redesign rests on — anything reading the topic can now
+tell "the price dropped" from "the price dropped and goes back up on Tuesday",
+which is the difference between waiting being a trap and waiting being a bounded
+decision.
+
+**Tested:** 30 assertions against the live database and real HCS, all passing —
+including two genuinely concurrent activations producing exactly one winner, a
+hand-edited price surviving the revert untouched, and the sale-start message
+read back off the Mirror Node with its `endsAt` intact.
+
+**Needs from you:** nothing yet — no screen calls these, and nothing existing
+changed except the two contract notes above.
+
+**Next:** Stage 18, the agent itself — one agent per person with N wants and a
+shared budget, an HCS subscription replacing the per-agent poller, the
+deterministic decision path, and the double-buy fix. No model involved yet.

@@ -69,6 +69,10 @@ GET    /api/games/:id/price-history     public, every row checkable on HCS
 POST   /api/games/:id/unpublish         take it off the catalog; buyers keep it
 POST   /api/games/:id/relist            put it back
 DELETE /api/games/:id                   drafts only
+POST   /api/games/:id/promotions        put a game on sale — see §17
+GET    /api/games/:id/promotions        public: the running sale + history
+PATCH  /api/games/:id/promotions/:pid   extend the end date
+DELETE /api/games/:id/promotions/:pid   end it early
 POST   /api/games/:id/media             add screenshots
 PATCH  /api/games/:id/media             reorder
 DELETE /api/games/:id/media/:mediaId
@@ -148,7 +152,8 @@ and `GAME_IS_WATCHED` (409, why a draft delete was refused), `HANDLE_TAKEN`
 (409, someone else has that handle), `SAVE_CONFLICT` (409, a cloud save changed
 elsewhere), `PAYLOAD_TOO_LARGE` (413) and `MALFORMED_JSON` (400) — those last
 two used to come back as `500`. `IS_FOUNDER` (409, trying to remove, demote, or
-leave-as the studio's actual founder — see §14).
+leave-as the studio's actual founder — see §14), `PROMOTION_EXISTS` and
+`PROMOTION_ACTIVE` (409, see §17).
 
 ---
 
@@ -985,3 +990,62 @@ only when something was removed:
 `reportKind` is `"game"`, `"review"`, or `"comment"`. `action` is `"none"` or
 `"removed"` for content, or the game-report actions (`"none"`, `"delisted"`,
 `"removed_from_storage"`) for a game.
+
+---
+
+## 17. Sales
+
+A sale is a **scheduled price** — it starts, it ends, and it puts the old price
+back on its own. The developer never has to remember to change it back, which
+is most of why sales barely existed before.
+
+```
+POST   /api/games/:id/promotions
+{ "salePriceUnits": 200000, "endsAt": "2026-09-14T18:00:00Z",
+  "startsAt": "2026-09-12T18:00:00Z" }     // omit startsAt to begin now
+```
+
+`salePriceUnits` must be **below** the current price, and `endsAt` must be in
+the future. Returns `409 PROMOTION_EXISTS` if the game already has one
+scheduled or running — one at a time, because overlapping sales have no
+coherent price to return to.
+
+```
+GET    /api/games/:id/promotions     public, slug or id
+PATCH  /api/games/:id/promotions/:promotionId   { "endsAt": "…" }  — later only
+DELETE /api/games/:id/promotions/:promotionId   ends it early, price restored
+```
+
+```json
+{ "active": { "id": "…", "status": "active",
+              "salePriceUnits": 200000, "salePriceUsd": 0.2,
+              "basePriceUnits": 600000, "basePriceUsd": 0.6,
+              "percentOff": 67,
+              "startsAt": "…", "endsAt": "…",
+              "hcsStartTxId": "0.0.x@…", "hcsEndTxId": null },
+  "history": [ … ] }
+```
+
+### Things that will bite if you don't know them
+
+**`PATCH /api/games/:id` with a `priceUnits` returns `409 PROMOTION_ACTIVE`
+while a sale is running.** The sale owns the price until it ends — editing
+underneath it would be silently undone at `endsAt`. The error carries
+`promotionId` and `endsAt`; send the person to the sale instead.
+
+**Extending only moves the end later.** A pulled-in deadline would strand
+anyone who read the original. To end early, `DELETE` — which is announced.
+
+**`GET /api/games/:idOrSlug` now carries `promotion`** — the running sale, or
+`null`. Render `endsAt`: a discount with a visible countdown is a different
+thing from a cheap game, and it's the part people act on.
+
+**A sale sends the same `price_drop` notifications** a manual price change
+does. Nothing new to handle.
+
+### Worth building a countdown for
+
+Both the start *and* the end of every sale are written to the public HCS topic,
+and the message carries `endsAt`. That means the deadline isn't our claim — it's
+on a public ledger before the sale even matters. Same verifiability story as the
+price history in §10.
