@@ -29,12 +29,13 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
-**Stage:** integration under way, one workflow at a time. Six done: browse signed out, sign in, library and notifications, make a studio, publish a game, and **buy it and play it**. Everything else still runs on mocks until its turn.
-**Real, not mocked, now:** the whole buyer path and the whole dev path. A dev makes a studio with a real ENS subname, publishes a build that is genuinely pinned and tokenised, and can put a collaborator on the splits by email alone. A buyer signs in with Privy, pays through x402 on Hedera with their own wallet, and the game boots in the same tab. Ownership, balance and library are all live Mirror Node answers rather than anything the browser remembers.
-**Still on mocks:** reviews, reports, the invite screen, the agent.
-**Deployed:** no. **New requirement:** the server keeps uploaded builds on disk under `storage/`, so it needs a persistent volume rather than an ephemeral filesystem. Why, in the 2026-09-06 (2) entry. **Resolved 2026-09-07:** builds are pinned as a zip as well as a directory, and a missing local file is refetched from IPFS and re-cached. A persistent volume is now an optimisation rather than a requirement. Games published before migration 0006 need `npm run builds:backfill` run where their zip still is.
-**Next:** invites and the held payouts they settle, then reviews and reports, then the agent.
-**Note for Priyanshu:** there is a `frontend-integration` branch on CGS-server with the server-side half of all of this. See the log entries below before you branch off `main`.
+**Stage:** six workflows plus a catch-up pass that closed most of the gap Stages 10–16 opened. Tested end to end against the live API on 2026-09-07; everything below was exercised in a browser, not assumed.
+**Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, and studio roster management**. A dev can now edit a live listing, reprice it, ship a patch every owner receives, reorder screenshots and unlist or relist. A buyer can save games, see a price drop land, review, and read a receipt that names its settlement transaction.
+**Still on mocks:** the invite screen and the agent. Comments have no UI, deliberately.
+**Untested:** cloud saves. The plumbing is built on both sides, but the only build we have does not write to storage, so nothing has been proved either way.
+**Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real (see below).
+**Next:** the invite screen and the payouts it settles, then the agent.
+**Note for Priyanshu:** the `frontend-integration` branch is merged; everything is on `main` now. One small change of mine is in **your** file — see the entry below.
 
 ### Backend · CGS-server
 
@@ -63,35 +64,10 @@ Only things stopping work right now.
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 | Both | Email only reaches one address | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. |
-| Suparno | Three published games have no retrievable build | 2026-09-07 | **`npm run builds:backfill` in `CGS-server`, on the machine that published them.** That is the only command needed — `game:delist` is a separate, optional tool for hiding a listing and is not part of this. Full steps below. They predate `build_zip_cid`, so their zips exist only on that disk. Alternatively `npm run game:delist -- <slug>` hides a listing without deleting the sales behind it. |
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
-### Running `builds:backfill` — Suparno
-
-The three `deadzone` listings were published before builds were pinned as a
-retrievable zip, so their only copy is `storage/builds/<gameId>.zip` on the
-machine that uploaded them. Everyone else gets a 404. This pins each one and
-records its CID, after which **anyone can play them from any machine**,
-including a deploy with an empty filesystem.
-
-In `CGS-server`, on **the laptop you published from**:
-
-```bash
-git pull            # needs the code that writes build_zip_cid
-npm install         # `resend` is a new dependency
-npm run builds:backfill
-```
-
-The shared Neon database is already migrated, so there is nothing to run for
-that. The script prints one line per game and **names anything it cannot
-reach** rather than skipping quietly, so a clean run is proof rather than
-silence. It is safe to run more than once; a game that already has a zip CID
-is not touched.
-
-If `storage/` was cleared, those zips are genuinely gone and republishing is
-the only fix. Everything published from now on is retrievable automatically and
-needs none of this.
+_Cleared 2026-09-07: the three builds with no retrievable copy. `builds:backfill` has run and all three are pinned. Nothing needs delisting — see the frontend entry below for why one that looked unrecoverable was not._
 
 ---
 
@@ -149,6 +125,9 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Where a build is served from | The API, not an IPFS gateway | No gateway will serve one: Pinata refuses HTML on `*.mypinata.cloud` and the public gateways can't find freshly pinned CIDs. IPFS keeps the job it is actually good at — proving what a build is, via the CID on the listing and on-chain. A custom gateway domain would reverse this in one function. |
 | How a build reaches the player | One ownership-checked zip, unpacked in the browser onto the build origin | Per-file auth would mean a Mirror Node call per asset, and a Godot build makes dozens. Unpacking locally also reuses the pipeline the publish preview already had, so purchased builds and previews run the same way on the same isolated origin. |
 | Funding a test wallet | A dev-only server route, off by default | A Privy wallet has no Hedera account until it receives value and no faucet gives testnet USDC to an address, so the operator is the only thing that can start one. Refused at boot when `NODE_ENV=production`. |
+| Unknown notification types | Skipped, never rendered | The enum grows on the backend and the client learns about it later. A `switch` with no default returned nothing and put a hole in the list the panel iterates, so one unrecognised row killed the bell. Skipping is the only behaviour that stays correct while the other side keeps adding. |
+| The cloud-save bridge | The host frame reads and writes the build's storage; no script is injected into the game | INTEGRATION.md §13 suggests injecting a script into the build's frame. It turned out not to be needed: `preview-host.html` is already same-origin with the build, so it is the one page living on both sides of the isolation boundary. The whole origin is snapshotted rather than a namespaced subset, because the keys belong to the game and the payload is meant to be opaque. |
+| Where managing a game lives | `/game/:slug/manage`, reached from the listing | Not behind the profile menu. Looking after a game is something you do to a specific game, not a place you go, and the IA rule is two pages, one action, wallet inline. |
 | Seed data | No build, no HTS token, on purpose | Pinning and minting spend real testnet resources, and the first purchasable game should come from the publish flow rather than a script that fakes its way past it. A seeded game browses and refuses to sell, which is the right answer for a row with no build behind it. |
 
 ---
@@ -664,3 +643,27 @@ changed; this only adds a notification neither of you had before.
 the product review. Remaining open ones are bigger product decisions —
 devlogs/following (discovery), collections/curated browsing — worth discussing
 before building rather than assuming.
+
+### 2026-09-07 · Frontend · Suparno
+
+**Shipped:** the frontend caught up with Stages 10–16. Wishlists, profiles with avatars and receipts, managing a published game, studio roster management, developer replies, content reports, and the cloud-save bridge. Reviews and reports came off mocks on the way. All of it was then run through in a browser end to end; what that found is at the bottom of this entry.
+
+**Changes the contract:** one line, and it is in your file. `UNIT_FIELDS` in `notification.routes.ts` now also covers `heldUnits`, `amountUnits`, `fromUnits` and `savedAtUnits`, so the payout and price-drop payloads get their `…Usd` companion like every other notification. Without it the client would have had to learn the asset's decimals, which §7 says never to do. Nothing else on the server moved.
+
+**Three things that were broken on our side, worth knowing because two of them are shapes:**
+
+1. **The notification bell crashed on anything new.** `adaptNotification` switched over four types with no default, so the other ten returned `undefined` and the poll hook threw on the first one that arrived. Two `payout_held` rows were already sitting in the database from the deadzone sale, so it was broken in practice, not in theory. All fourteen types have copy now, and — the actual fix — an unknown type is skipped rather than returned as nothing. **Add a fifteenth whenever you like; it cannot take the panel down again.**
+
+2. **A price-history row has no `priceUsd`, and I assumed one.** The rows are `{ fromUnits, toUnits, asset, at, hcsTxId }`. §10 describes the endpoint without listing the row fields, so I typed them from the surrounding prose and `formatPrice(undefined)` took the whole manage screen down — blank on refresh, from the moment a price first changed. Rendering the change rather than a price is better anyway. **Not a bug on your side**, but if §10 ever gains a row shape it would have saved an hour.
+
+3. **Reviews carry a real name now, and something downstream was still truncating it.** `author` used to be an address, so the listing ran `truncateAddress` on it; that quietly mangled any display name over eleven characters into `Priyan…umar`. Anything printing `author` should print it as sent.
+
+**Things your side does that the UI now surfaces, in case the wording matters:** `announced` on a price change is shown as its own sentence, because "I put it on sale" and "the sale is public" are different facts and only the second one an agent can act on. `unsettledSplits` is a yellow panel on the manage screen. `outcome` from removing a member is not shown — deleted and deactivated read the same from the UI's point of view, and the copy says instead that removing somebody never touches what they earned.
+
+**Two asymmetries preserved on purpose,** since they only exist if the UI keeps them: a studio can reply to a review and has no way to delete one, and reporting a review offers no immediate effect the way reporting a game does.
+
+**`builds:backfill` is done, and one conclusion in my last entry was wrong.** I said `deadzone` was unrecoverable because its local zip is gone. It is fine: all three builds are byte-identical, so they content-address to a single CID, and pinning it once made every one of them retrievable. Verified rather than reasoned — fetched the CID (`200 application/zip`, 23,616,945 bytes, 4.2s, sha256 matching both local copies), then called `findBuild` for the game with no local file and watched it pull the build back from IPFS and re-cache it in 4.3s. **That is the publish-here-play-there path running for real**, which is the thing a deploy on an ephemeral filesystem depends on and which nothing had exercised until now. Nothing needs delisting.
+
+**Needs from you:** nothing blocking. Two notes. A first-ever sign-in can still briefly report no embedded wallet — Privy's own API does that for a moment after creating one — and the client now re-reads `/api/me` the instant Privy says the wallet exists rather than guessing with retries, so the message clears itself. And one payment failed once and succeeded on retry with nothing charged; I could not reproduce it and have not guessed at a fix. My suspicion is Mirror Node lag on a wallet funded seconds earlier, where `payerFor` correctly refuses rather than inventing an account.
+
+**Next:** `/invite/:id` against the real endpoints, which is also what settles the held payouts, then the agent.
