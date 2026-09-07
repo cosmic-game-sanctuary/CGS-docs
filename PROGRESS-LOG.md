@@ -56,9 +56,35 @@ Only things stopping work right now.
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 | Both | Email only reaches one address | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. |
-| Suparno | Three published games have no retrievable build | 2026-09-07 | `npm run builds:backfill` on the machine that published them. They predate `build_zip_cid`, so their zips exist only there. `npm run game:delist -- <slug>` hides one instead, without deleting the sales behind it. |
+| Suparno | Three published games have no retrievable build | 2026-09-07 | **`npm run builds:backfill` in `CGS-server`, on the machine that published them.** Full steps below. They predate `build_zip_cid`, so their zips exist only on that disk. Alternatively `npm run game:delist -- <slug>` hides a listing without deleting the sales behind it. |
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
+
+### Running `builds:backfill` — Suparno
+
+The three `deadzone` listings were published before builds were pinned as a
+retrievable zip, so their only copy is `storage/builds/<gameId>.zip` on the
+machine that uploaded them. Everyone else gets a 404. This pins each one and
+records its CID, after which **anyone can play them from any machine**,
+including a deploy with an empty filesystem.
+
+In `CGS-server`, on **the laptop you published from**:
+
+```bash
+git pull            # needs the code that writes build_zip_cid
+npm install         # `resend` is a new dependency
+npm run builds:backfill
+```
+
+The shared Neon database is already migrated, so there is nothing to run for
+that. The script prints one line per game and **names anything it cannot
+reach** rather than skipping quietly, so a clean run is proof rather than
+silence. It is safe to run more than once; a game that already has a zip CID
+is not touched.
+
+If `storage/` was cleared, those zips are genuinely gone and republishing is
+the only fix. Everything published from now on is retrievable automatically and
+needs none of this.
 
 ---
 
