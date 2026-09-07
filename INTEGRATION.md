@@ -86,6 +86,8 @@ POST   /api/agents                      returns a wallet address to fund
 GET    /api/agents/:id                  status, balance, trigger
 GET    /api/me                          who you are, wallet balances, your studio — see §6
 GET    /api/me/library                  every game you actually hold a key for — see §6
+GET    /api/me/earnings                 what you've earned, across every studio — see §6.2
+GET    /api/studios/:id/earnings        what the studio made, team only — see §6.2
 POST   /api/me/withdraw/prepare         build a transfer out of the wallet — see §6.1
 POST   /api/me/withdraw/complete        sign it in the browser, server submits
 GET    /api/notifications
@@ -331,6 +333,60 @@ the field in `details`: `to` when the destination has no Hedera account yet, or
 when it cannot receive the token (it needs associating in that wallet first);
 and `intentId` when the intent expired, which is a "start it again", not an
 error to show as a failure.
+
+### 6.2 Earnings
+
+Two views of the same numbers, computed by one function so they cannot
+disagree.
+
+```http
+GET /api/me/earnings          requireAuth
+```
+**Cross-studio, deliberately.** Someone added to a split by email is often
+credited on games from several teams, so framing this as "your studio" would
+hide money from exactly the people the splits feature exists for.
+
+```json
+{ "totals": { "earned": {"units":12000,"display":0.012,"assetDecimals":6},
+              "gross": {...}, "sales": 2, "games": 1,
+              "held": {...}, "failed": {...}, "asset": "0.0.429274" },
+  "games": [ { "gameId":"…", "slug":"…", "title":"…", "status":"published",
+               "studio": {...}, "sales": 2, "gross": {...},
+               "yours": { "pct": 60, "role": "code", "earned": {...} },
+               "plays": 8, "likes": 3, "reviews": 1, "rating": 5 } ],
+  "held": [ { "gameTitle":"…", "amount": {...}, "reason":"…", "since":"…" } ],
+  "failed": [] }
+```
+
+```http
+GET /api/studios/:id/earnings    requireAuth, owner or accepted member
+```
+Same shape plus `people` — every handle on the studio's splits, what they
+earned, and whether they've claimed their invite yet. That's what lets an owner
+see *"your artist hasn't claimed theirs, 12.50 is waiting"*. Anyone outside the
+studio gets `NOT_OWNER`.
+
+Every money value is `{ units, display, assetDecimals }`. `units` is the truth;
+`display` is there so you don't derive it, and nothing should compute with it.
+
+**Held money settles by itself now.** A share that couldn't be paid (the person
+has no Hedera account yet) is held, and it goes out the moment that account
+first appears — triggered on `GET /api/me`, so simply opening the site is what
+releases it. You don't need a "claim" button and shouldn't build one.
+
+### `/api/me` also gains `studios`
+
+An array of every studio the person owns or has accepted an invite to, each
+with `role`. `studio` stays as the primary one so nothing existing moves. Worth
+using wherever a picker makes sense: a person on two teams could only ever see
+one before.
+
+### Studio members see their team's drafts
+
+`GET /api/studios/:idOrSlug` returns unpublished games to the owner **and to
+accepted members**, and only published ones to everyone else. Ownership was the
+wrong line — a collaborator credited on a game couldn't see the game they
+helped make. Member email addresses are still owner-only.
 
 ### Invites now actually send
 

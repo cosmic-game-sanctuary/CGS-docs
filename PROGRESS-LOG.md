@@ -426,3 +426,23 @@ Still on the **`frontend-integration` branch on CGS-server**. Everything below i
 **Also:** `INTEGRATION.md` §3 and §4 were still describing `POST /:id/pay` and a `playUrl` from `/download`, both of which you replaced. Corrected to prepare/complete and `buildPath`, including the reversal about the second origin now being needed for purchased builds too.
 
 **Next:** the wishlist agent — the price-drop endpoint it needs to fire at all, and the notifications around it.
+
+### 2026-09-07 · Backend · Priyanshu (3)
+
+**Shipped:** earnings, and the payout hole behind them.
+
+**Changes the contract:**
+
+- **`GET /api/me/earnings`** — what you've earned, across **every** studio you're on. Cross-studio because someone added by email is often credited on games from several teams, and "your studio's earnings" would hide money from exactly the people splits exist for. Totals, per-game breakdown with your percentage and share, what's held and why.
+- **`GET /api/studios/:id/earnings`** — owner and accepted members. Per game and per person, plus who's unpaid and how much is waiting on them.
+- **`/api/me` gains `studios`**, every studio you own or joined. `studio` stays as the primary, so nothing moves.
+- **Studio members now see their team's drafts.** Ownership was the wrong line — a collaborator credited on a game couldn't see the game they helped make. Member emails stay owner-only.
+- **`payout_held` and `payout_settled`** notification types.
+
+**The real fix underneath:** held payouts only moved at invite-accept, and only if a Hedera account already existed — which a new user's doesn't. So money owed sat until someone ran `splits:retry` by hand, and nothing told anyone it was there. It now settles the moment `/api/me` first resolves an account, on a request we were already serving. Opening the site is what releases it, so there is no "claim" button to build.
+
+Both sides are told now, too: a notification and an email when a share is held, and when it lands. The person owed usually has no account, so mail was the only channel that could reach them at all.
+
+**Tested end to end on testnet:** a 60/40 split with an unclaimed collaborator held 8000 units across two sales. Both reports agreed on every figure, the artist's own report showed what was owed before they could receive it, and after their account appeared the money **actually landed on chain** and both sales flipped `partial` to `distributed`.
+
+**Next:** the wishlist agent.
