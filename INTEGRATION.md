@@ -62,6 +62,17 @@ GET    /api/games                       catalog: search, tag, sort, freeOnly, cu
 GET    /api/games/:idOrSlug             detail + studio + splits + media (+ owned, liked when signed in)
 POST   /api/games                       upload, multipart — see §5
 POST   /api/games/:id/publish           locks splits, mints the token, writes the HCS listing
+PATCH  /api/games/:id                   edit the listing, including price — see §10
+POST   /api/games/:id/builds            ship a new version, multipart — see §10
+GET    /api/games/:id/builds            public version history
+GET    /api/games/:id/price-history     public, every row checkable on HCS
+POST   /api/games/:id/unpublish         take it off the catalog; buyers keep it
+POST   /api/games/:id/relist            put it back
+DELETE /api/games/:id                   drafts only
+POST   /api/games/:id/media             add screenshots
+PATCH  /api/games/:id/media             reorder
+DELETE /api/games/:id/media/:mediaId
+GET    /api/games/:id/manage            everything the studio's own screen needs
 GET    /api/games/:id/download          x402-gated — see §4
 GET    /api/games/:id/build.zip         the build itself, ownership-checked
 POST   /api/games/:id/pay/prepare       server builds and freezes the transfer — see §4
@@ -105,7 +116,9 @@ Errors are always the same shape:
 Codes worth branching on: `UNAUTHENTICATED` (401, show sign-in),
 `WALLET_NOT_FUNDED` (409, show the funding step), `NOT_OWNER` (403),
 `GAME_NOT_PUBLISHED` (409), `MODERATION_BLOCKED` (422, upload rejected),
-`VALIDATION_FAILED` (422, `details` has the field errors), `RATE_LIMITED` (429).
+`VALIDATION_FAILED` (422, `details` has the field errors), `RATE_LIMITED` (429),
+`MODERATION_HOLD` (409, a relist that moderation won't allow), `GAME_HAS_SALES`
+and `GAME_IS_WATCHED` (409, why a draft delete was refused).
 
 ---
 
@@ -468,3 +481,103 @@ error, that's the variable, tell me rather than working around it.
 The database is shared Neon, so whatever you publish locally is visible to
 both of us. Handy for testing against real rows; worth knowing before you
 wonder where someone else's test game came from.
+
+---
+
+## 10. Managing a game after it's published
+
+This is new, and it's the largest thing the frontend is currently missing. A
+published game used to be frozen: no price change, no typo fix, no new build,
+no way for a developer to take their own work down. All of that works now.
+
+Everything here needs the caller to be the game's studio owner, or a member
+promoted to the `owner` role. Anyone else gets `403 NOT_OWNER`.
+
+### Editing
+
+```
+PATCH /api/games/:id
+{ "title": "…", "tagline": "…", "description": "…",
+  "tags": ["puzzle"], "priceUnits": 250000, "coverMediaId": "<uuid|null>" }
+```
+
+Every field is optional; send only what changed. `priceUnits` is integer
+smallest-units like everywhere else — `250000` is $0.25 at 6 decimals.
+
+Two things to surface in the UI:
+
+- **The slug never changes**, even when the title does. Existing links keep
+  working. Don't re-route after a rename.
+- The response carries **`announced`** when the price changed. `false` means the
+  new price is live here but hasn't reached the public HCS topic yet, so
+  wishlist agents can't see it. Worth showing — it's the difference between "I
+  put it on sale" and "the sale is public."
+
+`coverMediaId` picks an existing image as the cover; it does not upload one.
+Uploading is `POST /api/games/:id/media` (multipart, field `media`, up to 8).
+`PATCH /api/games/:id/media` takes `{ "mediaIds": [...] }` and reorders —
+anything you leave out keeps its relative position at the end, it isn't deleted.
+
+### Shipping a new build
+
+```
+POST /api/games/:id/builds       multipart: build=<zip>, label?, notes?
+```
+
+A game has versions now. Uploading a new build makes it the one everyone plays,
+including people who already bought the game — that's the point of owning a key
+rather than a file, and every owner gets a `build_updated` notification. The old
+version's CID stays in the history permanently.
+
+`label` is the developer's own name for it ("v19", "1.0.2"), `notes` are patch
+notes. Both optional, both shown as-is.
+
+`GET /api/games/:id/builds` is public and takes a slug too:
+
+```json
+{ "current": 2,
+  "builds": [ { "version": 2, "label": "v19", "notes": "fixed the jump",
+                "buildCid": "bafy…", "buildSizeKb": 58141,
+                "hcsTxId": "0.0.x@…", "createdAt": "…" } ] }
+```
+
+### Price history
+
+`GET /api/games/:id/price-history` — public, slug or id. Returns `currentUnits`,
+`lowestEverUnits`, and a newest-first `history` where **every row carries the
+HCS transaction that announced it**. That's worth building a real UI for: it's
+a price history a visitor can verify on the Mirror Node without trusting us,
+which is not something any other storefront can offer.
+
+### Unlisting
+
+`POST /api/games/:id/unpublish` takes a game off the catalog. The response
+includes `ownersKeepAccess: true` — say it in the confirmation dialog, because
+it's the thing a developer is actually worried about. `POST /api/games/:id/relist`
+puts it back, and returns `409 MODERATION_HOLD` if the game was delisted by
+moderation rather than by its developer.
+
+`DELETE /api/games/:id` works on **drafts only**. A published game returns `422`
+with a message pointing at unlisting; one that has sold returns `409
+GAME_HAS_SALES`.
+
+### The manage screen
+
+`GET /api/games/:id/manage` is one call for the whole developer view:
+
+```json
+{ "game": { … }, "media": [ … ], "builds": [ … ], "priceHistory": [ … ],
+  "stats": { "sales": 4, "grossUnits": 12000000, "grossUsd": 12,
+             "owners": 5, "plays": 23, "playtimeSeconds": 8140,
+             "reviewCount": 2, "rating": 4.5, "unsettledSplits": 0 } }
+```
+
+`owners` counts distinct wallets holding a key, so it's higher than `sales` for
+a free game. `unsettledSplits` is sales whose money never reached the
+collaborators — surface it, because a team otherwise finds out when someone asks
+where their money is.
+
+### Also new on every game
+
+`GET /api/games/:idOrSlug` now returns `status`, `buildVersion`, `updatedAt` and
+`delistedBy` alongside everything it already returned. Nothing was removed.

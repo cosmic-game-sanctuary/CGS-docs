@@ -43,7 +43,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real now:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, and held payouts that settle themselves.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** the wishlist agent.
+**Next:** closing the product gaps, stage by stage — a game can now be edited, repriced and patched (Stage 10). Profiles, wishlist, cloud saves, studio management and devlogs follow. The wishlist agent is on hold pending a design call.
 
 ---
 
@@ -512,3 +512,26 @@ So the funding hint is now just "send USDC here", and nobody has to go and find 
 **One thing that has no answer yet:** there is still no way for a developer to edit, reprice, unpublish or delist their own game. The only writes to a game's status anywhere are moderation and an operator script. That is the gap the agent work would have opened first.
 
 **Next:** agent design discussion.
+
+### 2026-09-07 · Backend · Priyanshu
+
+**Shipped:** a game is no longer frozen once published. `PATCH /api/games/:id`
+edits the listing including the price; `POST /api/games/:id/builds` ships a new
+version that everyone who already owns the game gets; unlist and relist;
+delete a draft; add, reorder and remove screenshots; and `GET
+/api/games/:id/manage` returns the whole developer view in one call. Price
+changes go on the public HCS topic, which is what finally makes the wishlist
+agent able to fire at all. Verified end to end against real Pinata pins, real
+HCS writes read back from the Mirror Node, and a byte-for-byte check that the
+patched build is the one being served.
+
+**Changes the contract:** INTEGRATION.md §10 is new and covers all of it. Two
+things to know without reading it: **the slug never changes when a title does**,
+so don't re-route after a rename; and `GET /api/games/:idOrSlug` now also
+returns `status`, `buildVersion`, `updatedAt` and `delistedBy`. Nothing was
+removed. New error codes: `MODERATION_HOLD`, `GAME_HAS_SALES`, `GAME_IS_WATCHED`.
+
+**Needs from you:** nothing yet. When you get to it, the developer-side screens
+this unblocks are: edit a game, upload a patch, put it on sale, take it down.
+
+**Next:** profiles and public identity, then the wishlist.
