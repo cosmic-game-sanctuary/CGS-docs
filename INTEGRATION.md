@@ -89,6 +89,10 @@ GET    /api/me/wishlist                 your list, with what changed — see §1
 GET    /api/games/:id/comments
 POST   /api/games/:id/comments          no ownership gate — see §6
 PATCH  /api/comments/:id
+GET    /api/games/:id/saves             cloud saves — see §13
+GET    /api/games/:id/saves/:slot
+PUT    /api/games/:id/saves/:slot
+DELETE /api/games/:id/saves/:slot
 POST   /api/games/:id/sessions          call when play actually starts — see §6
 PATCH  /api/games/:id/sessions/:id      call when play ends
 POST   /api/studios
@@ -129,7 +133,9 @@ Codes worth branching on: `UNAUTHENTICATED` (401, show sign-in),
 `VALIDATION_FAILED` (422, `details` has the field errors), `RATE_LIMITED` (429),
 `MODERATION_HOLD` (409, a relist that moderation won't allow), `GAME_HAS_SALES`
 and `GAME_IS_WATCHED` (409, why a draft delete was refused), `HANDLE_TAKEN`
-(409, someone else has that handle).
+(409, someone else has that handle), `SAVE_CONFLICT` (409, a cloud save changed
+elsewhere), `PAYLOAD_TOO_LARGE` (413) and `MALFORMED_JSON` (400) — those last
+two used to come back as `500`.
 
 ---
 
@@ -763,3 +769,62 @@ and it currently has no UI at all.
 The developer's own view (`GET /api/games/:id/manage`) gains
 `stats.wishlisted` — how many people are waiting, which is the number that
 decides whether a discount is worth running.
+
+---
+
+## 13. Cloud saves
+
+A build runs on its own sandboxed origin, so whatever it writes to
+`localStorage` lives in that browser on that machine. Clear site data or open
+the game on a phone and progress is gone. These four routes are the
+somewhere-else it can live.
+
+Three slots per person per game, **512KB each**. The data is opaque — send
+whatever you dumped out of the game's storage, we never parse it.
+
+```
+GET    /api/games/:id/saves        -> { slots: [...], maxSlots: 3, maxBytes: 524288 }
+GET    /api/games/:id/saves/:slot  -> the slot, including `data`
+PUT    /api/games/:id/saves/:slot  <- { data, label?, device?, baseVersion? }
+DELETE /api/games/:id/saves/:slot
+```
+
+The list carries metadata only, no payloads:
+
+```json
+{ "slot": 0, "label": "Chapter 3", "sizeBytes": 812, "checksum": "…",
+  "device": "laptop", "version": 4, "updatedAt": "…" }
+```
+
+Same gate as play sessions: paid games need ownership, free ones don't.
+
+### The one thing to get right: `baseVersion`
+
+Send the `version` you last read. If the slot changed elsewhere since, you get
+`409 SAVE_CONFLICT` instead of silently overwriting it, and the error `details`
+describe the other side so you can show both:
+
+```json
+{ "error": { "code": "SAVE_CONFLICT", "message": "…",
+  "details": { "currentVersion": 5, "updatedAt": "…", "device": "phone",
+               "sizeBytes": 940, "checksum": "…" } } }
+```
+
+**Don't auto-merge.** There's no general way to merge two opaque blobs and
+guessing loses progress — show both and let the player pick. Omitting
+`baseVersion` means "overwrite, I know", which is right for a first write.
+
+`checksum` is a sha256 of the data, so you can verify a round trip.
+
+### The bridge
+
+The backend half is done; the browser half can't be. The build is on an
+isolated origin, so the page can't read its `localStorage` directly — it needs a
+small script injected into the build's frame that reads and writes storage on
+request and `postMessage`s it out. Roughly:
+
+1. On boot: `GET /saves`, pick the newest slot, `GET /saves/:slot`, post the
+   payload into the frame **before** the game starts reading storage.
+2. On exit, and on an interval: read storage back out, `PUT` it with the last
+   `version` you saw.
+3. On `409`: show both sides, let the player choose.

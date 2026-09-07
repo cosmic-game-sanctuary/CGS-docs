@@ -579,3 +579,22 @@ and is the most distinctive thing in this batch — a public, verifiable count o
 who is waiting for a game.
 
 **Next:** cloud saves for browser games.
+
+### 2026-09-07 (4) · Backend · Priyanshu
+
+**Shipped:** cloud saves. Three slots per person per game, 512KB each, data
+opaque so it works for any engine. Every save carries a checksum and a version;
+sending the version you last read turns a blind overwrite into a
+`409 SAVE_CONFLICT` that describes both sides.
+
+**Changes the contract:** INTEGRATION.md §13. Also two error responses changed
+for the better everywhere, not just here: an oversized body now returns
+`413 PAYLOAD_TOO_LARGE` and bad JSON returns `400 MALFORMED_JSON` — **both used
+to be `500 INTERNAL`**, including for an oversized build upload. The JSON body
+limit is 2mb now (was 1mb).
+
+**Needs from you:** the browser half of this can only be done on your side. The
+build runs on an isolated origin so the page can't read its `localStorage`
+directly — it needs a small bridge injected into the frame. §13 has the sketch.
+
+**Next:** studio management, review replies, and finishing moderation.
