@@ -99,6 +99,11 @@ POST   /api/studios
 GET    /api/studios/ens-availability    ?name=
 GET    /api/studios/:idOrSlug
 POST   /api/studios/:id/members         invite by email
+DELETE /api/studios/:id/members/:mid    remove — see §14
+PATCH  /api/studios/:id/members/:mid    { role } — promote/demote a manager
+POST   /api/studios/:id/members/:mid/resend-invite
+POST   /api/studios/:id/leave           leave a studio you're on
+POST   /api/studios/:id/transfer        { toMemberId } — founder only
 GET    /api/invites/:id                 public — the emailed link lands here
 POST   /api/invites/:id/accept
 POST   /api/agents                      returns a wallet address to fund
@@ -135,7 +140,8 @@ Codes worth branching on: `UNAUTHENTICATED` (401, show sign-in),
 and `GAME_IS_WATCHED` (409, why a draft delete was refused), `HANDLE_TAKEN`
 (409, someone else has that handle), `SAVE_CONFLICT` (409, a cloud save changed
 elsewhere), `PAYLOAD_TOO_LARGE` (413) and `MALFORMED_JSON` (400) — those last
-two used to come back as `500`.
+two used to come back as `500`. `IS_FOUNDER` (409, trying to remove, demote, or
+leave-as the studio's actual founder — see §14).
 
 ---
 
@@ -828,3 +834,60 @@ request and `postMessage`s it out. Roughly:
 2. On exit, and on an interval: read storage back out, `PUT` it with the last
    `version` you saw.
 3. On `409`: show both sides, let the player choose.
+
+---
+
+## 14. Studio management
+
+A studio used to be write-once, same as a game was before §10: no way to
+remove someone, fix a role, resend a lost invite, leave, or hand it off. All
+five now exist, all under `/api/studios`.
+
+**The roster (`studioMembers`) and the credit ledger (`splits`) are separate.**
+`splits` is permanent — every share ever paid or held stays exactly where it
+is, no matter what happens to someone's membership. Removing a member is safe
+to build at all only because of that separation: it changes whether someone is
+"on the team" right now, never what they earned.
+
+### Removing, leaving, promoting
+
+```
+DELETE /api/studios/:id/members/:memberId     manager-gated
+POST   /api/studios/:id/leave                 self, no body
+PATCH  /api/studios/:id/members/:memberId     { role: "owner" | "member" }
+POST   /api/studios/:id/members/:memberId/resend-invite
+```
+
+Remove and leave return the same shape:
+
+```json
+{ "outcome": "deleted", "member": { "id": "…", "handle": "…", "active": false } }
+```
+
+`outcome` is `"deleted"` (nobody had credited them on anything — the row is
+just gone), `"deactivated"` (they're on a split or a held payout somewhere —
+the row survives, but they drop off every roster and permission check), or
+`"already-inactive"` (idempotent — calling remove twice isn't an error). Show
+the difference if you want to; both mean the same thing from the UI's point of
+view — they're no longer on the active team.
+
+`role: "owner"` here means **manager**, not the studio's actual founder — see
+below. A manager can edit the listing, invite people, and manage the roster,
+the same as the founder, short of transferring the studio itself.
+
+### The founder is special
+
+Every one of the routes above returns `409 IS_FOUNDER` if targeted at the
+studio's actual founder (`studios.owner_user_id`'s own membership row) — it
+can't be removed, demoted, or self-left. The only way out for a founder is:
+
+```
+POST /api/studios/:id/transfer
+{ "toMemberId": "<an accepted, active member's id>" }
+```
+
+**Founder-only** — a promoted manager can't call this, even though they can do
+almost everything else. The target has to already be an accepted, active
+member. After transfer, `studios.owner_user_id` is the new person and their
+role is set to `owner` (manager); the old founder keeps their existing role and
+is now just a manager like anyone else — including being able to leave.

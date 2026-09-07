@@ -598,3 +598,24 @@ build runs on an isolated origin so the page can't read its `localStorage`
 directly — it needs a small bridge injected into the frame. §13 has the sketch.
 
 **Next:** studio management, review replies, and finishing moderation.
+
+### 2026-09-07 (5) · Backend · Priyanshu
+
+**Shipped:** studio management. Remove a member, change a role, resend a lost
+invite, leave a studio, transfer ownership — none of that existed before. The
+roster (`studioMembers`) and the credit ledger (`splits`) are now separate on
+purpose: removing someone never touches what they earned. If they're credited
+on anything they're deactivated, not deleted, and every credit and held payout
+survives untouched — checked directly in the test, not assumed.
+
+**Changes the contract:** INTEGRATION.md §14. Five new routes under
+`/api/studios`, all documented there. One to flag: **inviting a teammate no
+longer requires being the founder** — it's manager-gated now, same as editing a
+listing. New error code `IS_FOUNDER` (409) — the founder can't be removed,
+demoted, or leave their own studio; they transfer it instead.
+
+**Needs from you:** nothing yet — no frontend screen calls any studio member
+route today, so nothing existing changes behavior.
+
+**Next:** review replies (developer voice) and comment deletion, then reports
+on reviews/comments and telling a reporter what happened to their report.
