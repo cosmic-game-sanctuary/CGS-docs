@@ -40,9 +40,10 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 **Stage:** All 8 numbered stages done, plus Stage 9 (profile, library, likes, comments, playtime) on top. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node; likes, comments, and timed play sessions are all real, checked against a live-minted GameKey and live testnet transactions, not mocked.
+**Also real now:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, and held payouts that settle themselves.
 **Deployed:** no.
-**Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug.
-**Next:** deployment, so integration doesn't need a local backend. Frontend integration can start now — see [INTEGRATION.md](INTEGRATION.md).
+**Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
+**Next:** the wishlist agent.
 
 ---
 
@@ -54,6 +55,8 @@ Only things stopping work right now.
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
+| Both | Email only reaches one address | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. |
+| Suparno | Three published games have no retrievable build | 2026-09-07 | `npm run builds:backfill` on the machine that published them. They predate `build_zip_cid`, so their zips exist only there. `npm run game:delist -- <slug>` hides one instead, without deleting the sales behind it. |
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
@@ -446,3 +449,22 @@ Both sides are told now, too: a notification and an email when a share is held, 
 **Tested end to end on testnet:** a 60/40 split with an unclaimed collaborator held 8000 units across two sales. Both reports agreed on every figure, the artist's own report showed what was owed before they could receive it, and after their account appeared the money **actually landed on chain** and both sales flipped `partial` to `distributed`.
 
 **Next:** the wishlist agent.
+
+### 2026-09-07 · Backend · Priyanshu (4)
+
+**Shipped:** the studio and payout side, reviewed end to end and then filled in. Details of each piece are in the three entries above; this is what changed as a result of reading the whole thing at once.
+
+**Changes the contract:** nothing beyond what entries (2) and (3) already listed. `INTEGRATION.md` is current — §3, §4, §6.1 and §6.2 all match the code now, and the stale `POST /:id/pay` and `playUrl` descriptions are gone.
+
+**Two corrections worth flagging, both mine:**
+
+- **Studio members can see their team's drafts.** I had gated drafts on ownership when I stopped them leaking publicly, which put a collaborator credited on a game on the wrong side of the line. Membership is the test now; member email addresses are still owner-only.
+- **`/api/me` returns every studio you're on.** It was `findFirst` on both the owned studio and the membership, so someone on two teams saw one of them arbitrarily. Inviting collaborators by email is exactly what produces that situation.
+
+**New scripts:** `npm run game:delist -- <slug>` takes a listing out of the catalog **without deleting it** — a published game can have real sales and real minted keys behind it, and delisting never revokes anyone's copy. `npm run builds:backfill` pins the zip for games that predate `build_zip_cid`.
+
+**Where email stands.** It works and is tested, but with no verified domain Resend only delivers to the address the account itself was registered with. Sends to anyone else are refused and logged with the recipient, and a failed send never fails the request that caused it. A domain is being bought; when its DNS records are verified, `RESEND_FROM` changes and no other code moves. Until then, treat every invite as "the row was created" rather than "the person was told".
+
+**Also corrected the docs:** both `CLAUDE.md` files listed `@hashgraphonline/standards-sdk` in the stack. It was never installed — HCS-14 is hand-implemented, because the install never finished and the spec allows offline derivation. The `ipfs.io` references went with it.
+
+**Next:** the wishlist agent. It's the last unbuilt piece and the one the Hedera track is about.
