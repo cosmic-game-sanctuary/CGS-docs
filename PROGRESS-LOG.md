@@ -39,7 +39,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–19 (sales, the agent rebuilt as one-per-person, its decision layer) are **merged into `main`**. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
+**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
 - **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
@@ -51,7 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** Stage 20 — paid trials, deliberately last since it touches the payment path. Planned in the private notes; not started. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
+**Next:** not engineering, on this side. The agent-and-payments redesign (Stages 17–20) is done; nothing further planned. Deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
 
 ---
 
@@ -93,6 +93,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Who resolves an overdue hold or question | The sweep, re-checking eligibility and balance fresh, never replaying the original round | "Budget is never reserved" (spec §4) — a stale plan could be wrong by the time its deadline arrives, so nothing is ever executed off of anything but the current state. |
 | Split amounts | Derived from what was actually received, never the game's current price | The two were the same number until Stage 17 made prices revert on their own. A retry after a sale ended distributed the restored price for a discounted purchase, out of the platform account. `fulfilPurchase` takes the settled amount and everything downstream derives from it. |
 | Migrations vs. feature branches | A migration is a deploy to production regardless of which branch authored it — say so before running one | Both developers share one Neon database. Branching the code did not branch the schema, so Stage 18's dropped columns broke the other checkout with no code change on that side. |
+| Trial chunks, where they live | A `sales` row (`kind: "trial_chunk"`), not a table of their own | `pending_payouts.sale_id` is a hard foreign key into `sales`; a separate ledger would need its own held-payout path, retry script and HCS announcement, duplicating three things `sales` already does correctly. Credit ends up more derived, not less: a live sum over the same table that recorded the payment. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
@@ -889,3 +890,45 @@ that already existed.
 is optional and the agent falls back to its deterministic path without one.
 
 **Next:** Stage 20, paid trials.
+
+### 2026-09-08 (6) · Backend · Priyanshu
+
+**Stage 20, paid trials — the last stage of the agent redesign. On `main`.**
+
+**Shipped: try a game in paid chunks before buying it.** A developer sets a
+chunk price and a cap; every chunk is a real x402 payment, and everything
+spent trialling comes off the price if you buy — never expires, never a
+rental. The worst case (`chunkPrice × maxChunks`) can never exceed the game's
+price, enforced when a developer sets it.
+
+A chunk is recorded as an ordinary sale (not a new table) distinguished by
+`kind: "trial_chunk"` — reuses split distribution, the retry script and the
+HCS sale announcement for free rather than building parallel versions of all
+three. `GET /api/games/:id/download` already knows who's asking and reduces
+what it charges by whatever credit you've earned; fully covered routes to the
+same free-grant shape a $0 game uses, so nobody's ever offered a zero-amount
+payment.
+
+**Changes the contract:** INTEGRATION.md §19 (new), plus `PATCH
+/api/games/:id` gains three trial-config fields (§10).
+
+**Also fixed along the way:** `verifyPayment` failures only ever returned a
+bare error code, never the actual reason — now `details.message` carries what
+the facilitator actually said (e.g. an exact balance shortfall). Helps anyone
+debugging a real 402 rejection, not just testing.
+
+**Tested:** real infra — 13 real chunk purchases signed the way a browser
+actually would (Privy's raw `secp256k1_sign` over an already-hashed transfer,
+no mocked signing), split per chunk verified exact, the cap hit for real,
+both a fully-credit-covered purchase and a partially-covered one each minting
+a real GameKey while charging exactly the right amount. Two bugs the tests
+caught were in the test script itself, not the product — see stage-20.md §9
+for both, including the funding-units mixup that led to the invalidMessage
+fix above.
+
+**Needs from you:** nothing new to build against yet unless trials are wanted
+this cycle — worth weighing against finishing the agent screens first, since
+both are still on mocks.
+
+**This closes out the agent-and-payments redesign** (Stages 17–20). Nothing
+else planned on this side; `docs/wishlist-agent-spec.md` has the full record.

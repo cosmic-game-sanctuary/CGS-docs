@@ -121,6 +121,9 @@ DELETE /api/me/agent                    retire, refund
 GET    /api/me/agent/decisions          audit trail, newest first
 POST   /api/me/agent/decisions/:id/respond   answer an ask-first question — see §18
 PATCH  /api/games/:id/wishlist          set or clear a want — see §18
+GET    /api/games/:id/trial             config, and your own credit if signed in — see §19
+POST   /api/games/:id/trial/chunks/prepare   see §19
+POST   /api/games/:id/trial/chunks/complete  see §19
 GET    /api/users/:handle               public profile — see §11
 GET    /api/users/handle-availability   ?handle=
 PATCH  /api/me/profile                  display name, handle, bio, library visibility
@@ -557,6 +560,12 @@ Two things to surface in the UI:
 Uploading is `POST /api/games/:id/media` (multipart, field `media`, up to 8).
 `PATCH /api/games/:id/media` takes `{ "mediaIds": [...] }` and reorders —
 anything you leave out keeps its relative position at the end, it isn't deleted.
+
+The same `PATCH /api/games/:id` also turns a paid trial on, off, or changes
+it — `trialChunkPriceUnits`, `trialChunkMinutes`, `trialMaxChunks`. The first
+and third must be sent together, both numbers to turn a trial on or change
+it, or both `null` to turn it off — sending one without the other is a
+validation error, not a half-applied config. See §19.
 
 ### Shipping a new build
 
@@ -1156,3 +1165,67 @@ answer.
 outcome (buy or skip, per `onTimeout`) whether or not anyone answers, and a
 fresh price event on any of your wants cancels a still-open question before
 deciding fresh — answering a stale one just returns `ALREADY_RESOLVED`.
+
+---
+
+## 19. Paid trials
+
+A developer can let you try a game in paid chunks before buying it. Every cent
+spent trialling comes off the price if you go on to buy — it never expires and
+it's never a rental, just a running discount.
+
+```
+GET /api/games/:id/trial
+```
+
+```json
+{ "enabled": true,
+  "chunkPriceUnits": 30000, "chunkPriceUsd": 0.03, "chunkMinutes": 5,
+  "maxChunks": 10, "worstCaseUnits": 300000, "worstCaseUsd": 0.3,
+  "chunksConsumed": 2, "chunksLeft": 8,
+  "spentUnits": 60000, "spentUsd": 0.06,
+  "creditUnits": 60000, "creditUsd": 0.06,
+  "asset": "0.0.429274", "assetDecimals": 6 }
+```
+
+`enabled: false` (with everything else zeroed) means this game doesn't offer a
+trial — most games. Public: anyone can read the config. `chunksConsumed`,
+`spentUnits` and `creditUnits` are yours alone — signed out, or on a game that
+doesn't know you, they read zero.
+
+**Worst case is knowable before the first chunk**: `chunkPriceUnits ×
+maxChunks`, always ≤ the game's price — enforced when a developer sets it, not
+left as a mistake to discover mid-trial. Worth surfacing before the first
+chunk purchase: "try this for up to $0.30, stop whenever, it all comes off
+the price."
+
+### Buying a chunk
+
+Same two-step shape as buying the game — prepare, sign in the browser,
+complete — pointed at a different resource:
+
+```
+POST /api/games/:id/trial/chunks/prepare
+POST /api/games/:id/trial/chunks/complete   { "intentId": "…", "signatures": [...] }
+```
+
+Identical request/response shapes to `/pay/prepare` and `/pay/complete` (§4) —
+if that flow is already wired up, this is the same code pointed at a
+different URL, not a new integration. `409 TRIAL_CHUNKS_EXHAUSTED` means
+`chunksLeft` was already 0; check `GET /trial` before offering the button.
+
+**Buy the next chunk while the current one is still running**, not after it
+ends, so a signature prompt never interrupts play. That's on you — the backend
+has no opinion about when a chunk is bought, only that each one is real money
+that lands the moment it settles.
+
+No GameKey, no ownership, on a trial chunk — just five (or however many)
+minutes and a credit that's now a little bigger.
+
+### Buying the game after trying it
+
+Nothing new to call. `GET /api/games/:id/download` already checks who's
+asking and reduces what it charges by whatever credit you've earned on that
+game — pay the difference, or nothing at all if chunks already covered it.
+The response shape is identical either way; there's no "trial purchase"
+variant to branch on.
