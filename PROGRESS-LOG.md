@@ -39,7 +39,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–19 (sales, the agent rebuilt as one-per-person, its decision layer) are on the unmerged `agent` branch. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
+**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–19 (sales, the agent rebuilt as one-per-person, its decision layer) are **merged into `main`**. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
 - **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
@@ -51,7 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** Stage 20 on `agent` — paid trials, deliberately last since it touches the payment path. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
+**Next:** Stage 20 — paid trials, deliberately last since it touches the payment path. Planned in the private notes; not started. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
 
 ---
 
@@ -91,6 +91,8 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Agent's model | Groq, plain `fetch`, no SDK; `openai/gpt-oss-20b` | OpenAI-compatible REST needs nothing installed, same reasoning as hand-implemented HCS-14. gpt-oss-20b is one of the few models Groq's structured-output *strict* mode actually enforces — a verdict that fails to parse has to be impossible, not just unlikely, since real money follows it. |
 | Metering the model call | A real x402-gated route (`GET /api/agent/verdict`), same rails as buying a game | Makes "inference is metered over x402" literal rather than a claim. Identified by who paid rather than a request body, matching how every other Mirror-Node-backed check in this app refuses to trust a client-sent snapshot. |
 | Who resolves an overdue hold or question | The sweep, re-checking eligibility and balance fresh, never replaying the original round | "Budget is never reserved" (spec §4) — a stale plan could be wrong by the time its deadline arrives, so nothing is ever executed off of anything but the current state. |
+| Split amounts | Derived from what was actually received, never the game's current price | The two were the same number until Stage 17 made prices revert on their own. A retry after a sale ended distributed the restored price for a discounted purchase, out of the platform account. `fulfilPurchase` takes the settled amount and everything downstream derives from it. |
+| Migrations vs. feature branches | A migration is a deploy to production regardless of which branch authored it — say so before running one | Both developers share one Neon database. Branching the code did not branch the schema, so Stage 18's dropped columns broke the other checkout with no code change on that side. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
@@ -846,3 +848,44 @@ exactly the discipline the rest of this testing already follows.
 
 **Next:** Stage 20, paid trials — deliberately last, since it's the one
 remaining piece that touches the payment path itself.
+
+### 2026-09-08 (5) · Backend · Priyanshu
+
+**Merged the `agent` branch into `main`.** Stages 17–19 (sales, the 1:N agent,
+its decision layer) are on `main` now. It was a clean fast-forward — `main` had
+nothing the branch didn't.
+
+**Suparno: this is why your server was crashing, and it's my fault.** Keeping
+the work on a branch kept `main`'s *code* untouched but did nothing about the
+*database*, which we share. My Stage 18 migration dropped eight columns from
+`wishlist_agents`, so your checkout was querying columns that no longer
+existed — `column "target_game_id" does not exist`, every watcher tick, plus
+`GET /api/me/wishlist` and anything else touching that table. Nothing you wrote
+was wrong. Pull `main` and it goes away; I booted it and ran several sweep ticks
+with zero errors to check.
+
+The rule I should have followed and will from now on: **a migration is a deploy
+to production no matter which branch it was written on.** I'll say so before
+running one that drops or renames anything.
+
+**Nothing of yours breaks in the merge.** I checked every `/api/agents`
+reference in CGS-client first — they're all in `src/mocks/agent.ts` behind
+`TODO(integration)` markers, so no working screen depended on the old shape.
+The real routes are `/api/me/agent*`, documented in INTEGRATION.md §18.
+
+**Also fixed: a live money bug, unrelated to the agent.** `distributeSplits`
+computed every collaborator's share from the game's price *at the moment the
+split ran*, not from what the buyer actually paid. That was harmless while
+prices only moved by hand — and stopped being harmless the moment sales started
+moving them automatically. A $2 purchase whose split failed and was retried
+after the sale ended would pay out **$6** of shares from the platform account,
+and the reverse case underpays. Splits, the HCS sale message, the studio
+notification and its email now all derive from the amount actually received.
+
+**Changes the contract:** nothing. All of this is behaviour behind endpoints
+that already existed.
+
+**Needs from you:** pull `main`. Your `.env` needs no new keys — `GROQ_API_KEY`
+is optional and the agent falls back to its deterministic path without one.
+
+**Next:** Stage 20, paid trials.
