@@ -952,3 +952,12 @@ Purely internal to `services/games/fulfil.ts`.
 
 **Tested:** two genuine zero-history Privy wallets, real payouts, both
 confirmed to create the account as a side effect and land the exact amount.
+
+### 2026-09-08 (8) · Backend · Priyanshu
+
+**Added INTEGRATION.md §20 — suggested frontend flows for the agent, sales,
+and trials.** Kai asked for concrete UX/flow suggestions to hand off, not
+just the API shapes. Covers where each thing lives (page vs. inline vs.
+overlay), the calls involved, and a suggested build order (sales → trials →
+agent, smallest to largest, none depending on each other). Take it as a
+starting point — you know the design system, this doesn't.

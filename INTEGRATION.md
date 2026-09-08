@@ -1229,3 +1229,117 @@ asking and reduces what it charges by whatever credit you've earned on that
 game — pay the difference, or nothing at all if chunks already covered it.
 The response shape is identical either way; there's no "trial purchase"
 variant to branch on.
+
+---
+
+## 20. What's left on the frontend, and how I'd build it
+
+Three surfaces are fully live on the backend and have no screen yet: the
+agent, sales, and trials. Concrete suggestions below — flow, the calls
+involved, and the shape I'd give each one. Treat these as a starting point,
+not a spec; you know the design system, I don't.
+
+### The agent
+
+**It's a page, not a modal.** An agent is an ongoing thing that runs for
+weeks, not a one-off action — closer to "your wallet" than to "confirm this
+purchase." `/agent` (or under `/me/agent`), reachable from the profile menu
+and from a shortcut on any wishlisted game ("watch with your agent →").
+
+**First visit, no agent yet:** one screen explaining the pitch (pick games
+and a max price, the agent buys when the math works, you never watch a sale
+timer) and one button. Creating it asks for mode (autonomous / ask-first)
+and, optionally, a name (`ensLabel`) — skip the ENS field entirely in v1 if
+it's not worth the UI real estate; it's genuinely optional server-side.
+
+**After creation:** it needs money before it can do anything, and that's
+just `POST /api/me/withdraw/prepare` pointed at `fundAddress` instead of an
+external address — the exact withdraw flow you've already built, so this
+should be close to free.
+
+**The agent's page, once funded**, three things stacked:
+1. Balance, prominently — people will worry it's underfunded before they
+   worry about anything else.
+2. The want list — each row a game, its max price, its note, a remove
+   button. This *is* the wishlist with a filter applied
+   (`GET /api/me/wishlist`, rows where `agentMaxUnits` isn't null) — don't
+   build a second list, add a column to the one you have.
+3. Recent decisions (`GET /api/me/agent/decisions`) — bought/held/declined/
+   asked, with `reasoning` shown when it's not null. This is the "what is my
+   agent actually thinking" screen and it's worth making legible; it's also
+   the strongest demo moment.
+
+**Setting a want** lives on the game itself, not on the agent page — next to
+the existing wishlist heart, "watch with agent" opens a tiny inline form
+(max price, optional note) that calls `PATCH /api/games/:id/wishlist`.
+`422 NO_AGENT` means send them to create one first.
+
+**Ask-first is the one that needs its own attention.** When a question comes
+in (`agent_asked` notification), it needs to be impossible to miss and easy
+to act on without leaving what you're doing:
+- The bell gets a normal notification, same as any other type.
+- The agent page shows it as a highlighted card at the top while it's
+  unresolved, reasoning and deadline visible.
+- Both places offer the same four buttons: Buy / Skip / Remove / Keep, each
+  a single call to `POST /api/me/agent/decisions/:id/respond`. `409
+  ALREADY_RESOLVED` means someone (or the deadline) beat them to it — show
+  what actually happened, don't treat it as an error.
+
+No polling loop needed beyond what you already have for notifications; the
+agent page can just refetch on mount and after any action.
+
+### Sales
+
+Additive to what already exists — no new page.
+
+**On the game card and detail page**, wherever price shows: if
+`GET /api/games/:idOrSlug`'s `promotion` is non-null, show the discount and a
+countdown to `endsAt` instead of (or beside) the plain price. This is the
+one piece worth real visual weight — a sale with a visible deadline is what
+makes the demand curve pitch land, and the deadline is provably real (it's
+on HCS), which is worth saying somewhere on the page.
+
+**On the manage screen**, a "Start a sale" action next to the price field —
+a small form (sale price, optional scheduled start, end date), same modal
+pattern you'd use for anything else there. `409 PROMOTION_ACTIVE` on a
+direct price edit means send them to the sale instead of failing silently.
+An active sale shows extend/end-early controls in place of the edit form.
+
+### Paid trials
+
+**The buy button gets a sibling, not a new page.** On a priced game with
+`GET /api/games/:id/trial`'s `enabled: true`, a secondary "Try for up to
+$X" button next to Buy — `worstCaseUnits` is the number to show, up front,
+so there's no meter anxiety to design around.
+
+**Starting a trial boots the game exactly like a real play session** — same
+isolated origin, same iframe — because that's the whole pitch (no separate
+demo build). The first chunk is bought transparently before it boots
+(`POST /trial/chunks/prepare` → sign → `POST /trial/chunks/complete`, the
+identical shape your `/pay/prepare`+`/pay/complete` component already
+knows, just pointed at a different pair of URLs).
+
+**A small persistent HUD during the session** — corner-positioned, not a
+modal, the same reasoning as checkout being an overlay rather than a route:
+the game is running underneath it and shouldn't be interrupted. Shows
+chunks left and credit earned so far, and buys the next chunk while the
+current one still has time left (not after it ends), so a signature prompt
+never freezes play. A "Buy now — $X" button is always visible in it; that
+call is just `GET /download`, unchanged, since credit is applied
+automatically.
+
+**On the manage screen**, trial config sits next to price: chunk price,
+minutes, max chunks, with a live "worst case: $X" computed client-side as
+they type (server enforces `chunkPrice × maxChunks ≤ price` regardless —
+this is just so they see the number before submitting, not a substitute for
+the real check). Both fields null clears the trial.
+
+### Suggested order
+
+1. **Sales** — purely additive, smallest surface, no new screen.
+2. **Trials** — one button, one HUD component, reuses the payment-signing
+   code you already have.
+3. **The agent** — the largest piece, and the one with a genuinely new page.
+
+None of the three depend on each other. Pick whichever's most useful for the
+demo first.
