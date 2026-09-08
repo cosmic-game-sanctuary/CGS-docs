@@ -94,6 +94,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Split amounts | Derived from what was actually received, never the game's current price | The two were the same number until Stage 17 made prices revert on their own. A retry after a sale ended distributed the restored price for a discounted purchase, out of the platform account. `fulfilPurchase` takes the settled amount and everything downstream derives from it. |
 | Migrations vs. feature branches | A migration is a deploy to production regardless of which branch authored it — say so before running one | Both developers share one Neon database. Branching the code did not branch the schema, so Stage 18's dropped columns broke the other checkout with no code change on that side. |
 | Trial chunks, where they live | A `sales` row (`kind: "trial_chunk"`), not a table of their own | `pending_payouts.sale_id` is a hard foreign key into `sales`; a separate ledger would need its own held-payout path, retry script and HCS announcement, duplicating three things `sales` already does correctly. Credit ends up more derived, not less: a live sum over the same table that recorded the payment. |
+| What "held" means for a collaborator's share | Only "the invite hasn't been accepted" — never "accepted, but no Hedera account yet" | HIP-542 charges account creation to the sender. Paying a known EVM address directly creates the account as a side effect, so nothing is ever held waiting on an account the payment itself would have created. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
@@ -932,3 +933,22 @@ both are still on mocks.
 
 **This closes out the agent-and-payments redesign** (Stages 17–20). Nothing
 else planned on this side; `docs/wishlist-agent-spec.md` has the full record.
+
+### 2026-09-08 (7) · Backend · Priyanshu
+
+**Small follow-up, on `main`: a collaborator's share no longer waits on them
+having touched Hedera.** Kai asked whether we could auto-create a teammate's
+Hedera account when they get paid instead of leaving their share held until
+they had one. We can, and it costs nobody anything extra: HIP-542 already
+puts the account-creation fee on the sender, not the recipient — the same
+mechanic every first-funding moment in this app already relies on. A share
+is now paid straight to a collaborator's EVM alias the moment their invite is
+accepted, whether or not they've ever touched Hedera — the payment itself
+creates the account. "Held" now means exactly one thing: the invite hasn't
+been accepted yet, full stop.
+
+**Changes the contract:** nothing — no route, no response shape changed.
+Purely internal to `services/games/fulfil.ts`.
+
+**Tested:** two genuine zero-history Privy wallets, real payouts, both
+confirmed to create the account as a side effect and land the exact amount.
