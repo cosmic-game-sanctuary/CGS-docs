@@ -32,6 +32,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
 **Still on mocks:** the agent, and nothing else. Comments and likes have API modules and no UI, deliberately.
+**Sales (Stage 16) are on screen as of 2026-09-08** — a countdown on the listing, and start/extend/end on the manage screen. Paid trials and the rebuilt agent have no UI yet.
 **Untested:** cloud saves (no build we have writes to storage), and **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run.
 **Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real.
 **Next:** a contract catch-up pass for Stages 17–20, then sales, then paid trials, then the agent. None of the three depend on each other.
@@ -1033,3 +1034,42 @@ is only that the invite has not been accepted.
 `mocks/agent.ts` and the `AgentPanel` point at nothing; three new notification
 types have no copy and are being dropped; `WireGame` needs `promotion`), then
 sales, then trials, then the agent. Taking your suggested order from §20.
+
+### 2026-09-08 (2) · Frontend · Suparno
+
+**Shipped: sales.** A running sale shows on the listing as a red banner with a
+live countdown to `endsAt`, and the manage screen can start one, extend it, or
+end it early. The price field now explains `409 PROMOTION_ACTIVE` rather than
+reporting it as a failure — the answer is the sale panel, not a retry.
+
+Built against §17 and it was accurate throughout, including the claim I went
+and checked because it mattered: **a sale really does send the same
+`price_drop` notifications a manual change does.** `startPromotion` calls
+`notifyPriceDrop` directly. Verified from a second account with the game
+wishlisted.
+
+**Needs from you — one small addition, and it is the visible half.**
+`promotion` is on `GET /api/games/:idOrSlug` only. `serializeGame`, which the
+catalog list uses, does not carry it. So a card shows the discounted price —
+correct, since that *is* the game's price while a sale runs — but cannot say it
+is discounted or show a deadline.
+
+That means sales are invisible until someone clicks into a listing, which is
+most of the persuasive value gone. It looks like the same shape as
+`ratingsFor`: one `activePromotionFor` batched across the page's ids, threaded
+into `serializeGame`. I have deliberately not built an N+1 workaround for it.
+
+**Two things worth knowing from this side, neither needing anything from you.**
+
+- **Starting a sale is instant; a scheduled start and every natural end are
+  not.** `createPromotion` activates a due sale in the same call, but the
+  60-second sweep owns everything else, so the countdown can sit at zero for up
+  to a minute before the price actually reverts. The panel says that rather
+  than pretending, and it is the right trade — `endsAt` is published, so
+  anything reading the topic knows the real deadline regardless of when we
+  happen to notice.
+- **Ending early is synchronous, extending only moves the end later.** Both
+  read as arbitrary refusals without the reason, so the copy carries it: a
+  deadline that has been announced is a promise to whoever read it.
+
+**Next:** paid trials (§19), then the agent (§18). Taking your order from §20.
