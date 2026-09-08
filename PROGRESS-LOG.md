@@ -29,13 +29,13 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
-**Stage:** six workflows plus a catch-up pass that closed most of the gap Stages 10–16 opened. Tested end to end against the live API on 2026-09-07; everything below was exercised in a browser, not assumed.
-**Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, and studio roster management**. A dev can now edit a live listing, reprice it, ship a patch every owner receives, reorder screenshots and unlist or relist. A buyer can save games, see a price drop land, review, and read a receipt that names its settlement transaction.
-**Still on mocks:** the invite screen and the agent. Comments have no UI, deliberately.
-**Untested:** cloud saves. The plumbing is built on both sides, but the only build we have does not write to storage, so nothing has been proved either way.
-**Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real (see below).
-**Next:** the invite screen and the payouts it settles, then the agent.
-**Note for Priyanshu:** the `frontend-integration` branch is merged; everything is on `main` now. One small change of mine is in **your** file — see the entry below.
+**Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
+**Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
+**Still on mocks:** the agent, and nothing else. Comments and likes have API modules and no UI, deliberately.
+**Untested:** cloud saves (no build we have writes to storage), and **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run.
+**Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real.
+**Next:** a contract catch-up pass for Stages 17–20, then sales, then paid trials, then the agent. None of the three depend on each other.
+**Needs from you:** one bug in `game.routes.ts` and a backfill behind it — see the 2026-09-08 frontend entry. It makes `/api/me/earnings` report zero for every studio owner.
 
 ### Backend · CGS-server
 
@@ -961,3 +961,75 @@ just the API shapes. Covers where each thing lives (page vs. inline vs.
 overlay), the calls involved, and a suggested build order (sales → trials →
 agent, smallest to largest, none depending on each other). Take it as a
 starting point — you know the design system, this doesn't.
+
+### 2026-09-08 · Frontend · Suparno
+
+**Shipped: W7 and W11**, built together because they are the same story from
+both ends. A share is credited to somebody with no wallet, the money is held,
+and both sides need to see it.
+
+- **`/invite/:id` is real.** `src/mocks/invites.ts` is deleted. The screen lost
+  three things the mocked version had, and all three are absences in the API
+  rather than gaps: **no decline** (not accepting *is* the decline, and it stays
+  reversible), **no editing your handle** (it is already on published splits,
+  which are immutable), and **no naming a game** (an invite is to a studio, and
+  one person can be credited across several of its games at different
+  percentages).
+- **New page, `/money`.** Earnings across every team, what is still owed, and
+  the withdrawal. It is the third page behind the profile menu and the first
+  added since that list was written: earnings are cross-studio so no studio page
+  can hold them, and they are not games you own so the library cannot either.
+  Studio earnings sit on the studio page, team-only, decided from
+  `/api/me`'s `studios` rather than by fetching and catching a 403.
+
+**Tested end to end, with two accounts.** A brand new account that had never
+been funded accepted an invite and **received the held share** — its Hedera
+account did not exist before that payment and did after, which is your
+auto-create fix working exactly as described. The owner's notification fired
+and the roster flipped. **The withdrawal transfer is the one thing not yet
+run**; everything up to it is verified.
+
+**Needs from you — one real bug, in `game.routes.ts`.** `/api/me/earnings`
+reports `$0.00 across 0 games, 0 sales` for a studio owner with real sales
+behind them. `resolveSplitRecipients` short-circuits on an explicit wallet and
+records `studioMemberId: null, userId: null`; the publish flow sent the owner's
+own share as a bare wallet; and `personalEarnings` finds shares by membership
+or user id, so the owner's own share belongs to nobody. **Two asks:**
+
+1. When `input.wallet` matches a known user's `evmAddress`, set `userId` too,
+   so this cannot depend on every client getting it right. I have fixed our
+   side (we send the membership row now), but only for games published from
+   here on.
+2. A backfill for existing rows: `user_id` from `users.evm_address =
+   splits.wallet`, and `studio_member_id` from that user's membership in the
+   game's studio. Until that runs, every game published before today reports
+   zero earnings to the person who made it.
+
+**Two things worth knowing from this side.**
+
+- **The shared-database lesson, confirmed the hard way.** Stage 18's dropped
+  `target_game_id` did not only break the watcher tick. It also broke
+  `GET /api/me/wishlist` — the Saved section on `/library` — and deleting a
+  draft. A crash in a background tick is contained; those two are request
+  paths. It also cost an hour of wrong diagnosis, because from inside the stale
+  checkout the schema, the migrations and the code all agreed with each other
+  and only the database disagreed. It was right and they were wrong.
+- **`WALLET_MISSING` was reaching real users.** Privy creates the embedded
+  wallet during login and its own API reports the account without one for a few
+  seconds afterwards, so `requireAuth` correctly 401s. Our retry gave up after
+  four seconds and then showed your message — *"Sign out, then sign in again"* —
+  permanently. That is our race printed as the user's chore, and it was also
+  silently failing the invite accept behind it. Fixed on our side with a
+  45-second budget for that code specifically, and the accept button now waits
+  rather than firing into the window. No change needed from you; the message is
+  right for what it describes, it was just being shown for the wrong reason.
+
+**Copy that changed because of your fix:** two screens said held money was
+waiting on the wallet having a Hedera account, which was true when I wrote it
+that morning and is not any more. They now say what "held" means today, which
+is only that the invite has not been accepted.
+
+**Next:** the catch-up pass for Stages 17–20 (`POST /api/agents` is gone, so
+`mocks/agent.ts` and the `AgentPanel` point at nothing; three new notification
+types have no copy and are being dropped; `WireGame` needs `promotion`), then
+sales, then trials, then the agent. Taking your suggested order from §20.
