@@ -119,6 +119,7 @@ GET    /api/me/agent                    status, live balance
 PATCH  /api/me/agent                    change mode / timeout / expiry
 DELETE /api/me/agent                    retire, refund
 GET    /api/me/agent/decisions          audit trail, newest first
+POST   /api/me/agent/decisions/:id/respond   answer an ask-first question — see §18
 PATCH  /api/games/:id/wishlist          set or clear a want — see §18
 GET    /api/users/:handle               public profile — see §11
 GET    /api/users/handle-availability   ?handle=
@@ -1066,10 +1067,13 @@ POST /api/me/agent
   "ensLabel": "kai-agent" }             // ensLabel optional
 ```
 
-`mode` is `"autonomous"` (buys on its own) or `"ask"` (asks first — not wired
-up yet, see below). `ensLabel` claims a subname the same way a studio does;
-omit it and the agent has no name, just an address. Returns a wallet address —
-fund it like any withdrawal destination:
+`mode` is `"autonomous"` (acts on its own, tells you after) or `"ask_first"`
+(asks before an ambiguous or contested buy, but only when there's genuinely
+time to — see below). `onTimeout` (`"buy"` or `"skip"`) is what happens if an
+ask-first question goes unanswered past its deadline. `ensLabel` claims a
+subname the same way a studio does; omit it and the agent has no name, just
+an address. Returns a wallet address — fund it like any withdrawal
+destination:
 
 ```json
 { "id": "…", "status": "draft", "agentAccountId": null,
@@ -1103,14 +1107,20 @@ can't exceed what the agent's wallet actually holds right now.
 
 The agent buys a want the moment the game's price drops to or below
 `agentMaxUnits` **and** it's still unowned, picking whichever wants currently
-fit its balance if several qualify at once (soonest-ending sale first). No
-model is involved yet — `mode: "ask"` is accepted but behaves like autonomous
-for now; the ask-first flow is still being built.
+fit its balance if several qualify at once (soonest-ending sale first). That
+much never calls a model and never costs anything beyond the games themselves.
+
+**When more is eligible than the balance covers**, a real model call decides
+what to do with the rest — buy some now, hold others for a bounded wait (only
+ever when there's a real sale deadline to bound it), or decline. This is the
+only thing that spends on "thinking" rather than games, and it's small and
+reported separately — see `GET /api/me/agent/decisions`'s `inferenceCostUnits`.
 
 A purchase notifies once per decision, not once per game — buying three wanted
 games in one pass is one `agent_purchased` notification and one email, not
 three. `GET /api/me/agent/decisions` is the audit trail: what was considered,
-what was bought, newest first.
+what was chosen, `reasoning` (null for an obvious buy, real text for a
+contested one), and `inferenceCostUnits`, newest first.
 
 **The game lands in your library, not the agent's**, even though the agent's
 wallet paid — that's the whole point of delegating the budget rather than the
@@ -1119,3 +1129,30 @@ other purchase.
 
 An agent past `expiresAt` retires and refunds itself automatically, the same
 `agent_expired` notification/email shape as a manual `DELETE`.
+
+### Ask-first
+
+In `ask_first` mode, a contested round that's genuinely close **and** has
+enough time before any sale ends sends an `agent_asked` notification and email
+instead of buying immediately — the recommendation, the reasoning, and a
+deadline. Answer it:
+
+```
+POST /api/me/agent/decisions/:id/respond
+{ "action": "buy" }     // or "skip", "remove", "keep"
+```
+
+`buy` executes the recommendation (re-checked against the current price and
+balance — it can still turn out to have become unaffordable or already owned
+in the meantime, in which case nothing is charged). `skip` and `keep` both
+decline this round without changing the want; `remove` also clears the want's
+`agentMaxUnits`, same as `PATCH .../wishlist` with a null. Answering twice, or
+answering after the deadline already resolved it automatically, returns `409
+ALREADY_RESOLVED` — check for that rather than treating a slow double-tap as
+a bug. `422 NOT_ASKABLE` means this decision was never a question — nothing to
+answer.
+
+**Nothing is ever left hanging.** A question's deadline always fires an
+outcome (buy or skip, per `onTimeout`) whether or not anyone answers, and a
+fresh price event on any of your wants cancels a still-open question before
+deciding fresh — answering a stale one just returns `ALREADY_RESOLVED`.

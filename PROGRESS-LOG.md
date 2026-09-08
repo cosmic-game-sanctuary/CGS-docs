@@ -39,7 +39,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–18 (sales, the agent rebuilt as one-per-person) are on the unmerged `agent` branch. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
+**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–19 (sales, the agent rebuilt as one-per-person, its decision layer) are on the unmerged `agent` branch. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
 - **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
@@ -51,7 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** Stage 19 on `agent` — the decision layer, an inference endpoint the agent pays to call, ask-first mode. Needs a `GROQ_API_KEY`. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
+**Next:** Stage 20 on `agent` — paid trials, deliberately last since it touches the payment path. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
 
 ---
 
@@ -88,6 +88,9 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Agent watcher | ~~Mirror Node polling, 5s, saved cursor~~ **Superseded 2026-09-08** — one HCS topic subscription for every agent | Polling cost scaled with agent count; 25 agents alone used a fifth of the public Mirror Node's rate budget. A subscription costs the same whether one agent exists or a thousand. `listener_state`'s saved cursor still does the restart-safety job it always did. See `docs/stage-18.md`. |
 | Agent shape | ~~One wallet per watched game~~ **Superseded 2026-09-08** — one wallet per **person**, N wanted games, one shared budget | Three later designs to make the 1:1 shape worth pitching all failed for the same reason: they put the agent on the buyer's taste instead of on allocation. See `docs/wishlist-agent-spec.md` §14 and `docs/stage-18.md`. |
 | Agent purchase, who owns the result | The real buyer's account, via an `x-owner-account-id` header honoured only for a verified agent payer | The agent pays with its own wallet; the game has to land with the human it's working for, or the purchase is pointless. Caught by Stage 18's own test before it shipped. |
+| Agent's model | Groq, plain `fetch`, no SDK; `openai/gpt-oss-20b` | OpenAI-compatible REST needs nothing installed, same reasoning as hand-implemented HCS-14. gpt-oss-20b is one of the few models Groq's structured-output *strict* mode actually enforces — a verdict that fails to parse has to be impossible, not just unlikely, since real money follows it. |
+| Metering the model call | A real x402-gated route (`GET /api/agent/verdict`), same rails as buying a game | Makes "inference is metered over x402" literal rather than a claim. Identified by who paid rather than a request body, matching how every other Mirror-Node-backed check in this app refuses to trust a client-sent snapshot. |
+| Who resolves an overdue hold or question | The sweep, re-checking eligibility and balance fresh, never replaying the original round | "Budget is never reserved" (spec §4) — a stale plan could be wrong by the time its deadline arrives, so nothing is ever executed off of anything but the current state. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
@@ -801,3 +804,45 @@ with a live server's own listener racing the test on purpose.
 **Next:** Stage 19, the decision layer — an inference endpoint the agent pays
 to call, ask-first mode, and `agent_decisions.reasoning` actually getting
 filled in. Needs a `GROQ_API_KEY`.
+
+### 2026-09-08 (4) · Backend · Priyanshu
+
+**Still on `agent`, still unmerged.** Stage 19: the decision layer, using the
+`GROQ_API_KEY` from this session.
+
+**Shipped: a real model decides the cases that were never deterministic.** An
+obvious buy still buys immediately, no model, no cost — unchanged. Whenever
+something eligible is left over after that (more affordable than the balance
+covers), a real model call weighs the whole set — sale deadlines, how the
+price compares to its own lowest ever, the buyer's own note — and can buy
+some now, hold others for a bounded wait, or decline. Inference is paid for
+over x402, same rails as buying a game, and reported separately from game
+spend.
+
+**Ask-first is real.** In that mode a genuinely close, time-permitting call
+sends a question instead of acting — see INTEGRATION.md §18 for the four
+answers and what each does. Nothing is ever left hanging: an unanswered
+question always resolves by its deadline, and a fresh price event cancels a
+still-open one rather than letting it answer a question about a world that's
+moved on.
+
+**Changes the contract:** INTEGRATION.md §18, adding `POST
+/api/me/agent/decisions/:id/respond` and correcting `mode`'s real values
+(`autonomous` / `ask_first` — an earlier entry here had this wrong).
+`GET /api/me/agent/decisions` rows now carry real `reasoning` and
+`inferenceCostUnits` on a contested round instead of always null.
+
+**Tested:** a real Groq call verified in isolation first, then full rounds
+against real infrastructure — real contention producing one charged decision
+at the configured price, a hold and an ask-first question both resolving
+correctly with no live trigger present, `respond`'s four actions, and a stale
+question getting superseded by a fresh price event. One test assertion
+initially failed only because the live test server's own background sweep
+timer claimed a row before the test's own direct call did — re-verified by
+checking actual outcome rather than that one call's return value, which is
+exactly the discipline the rest of this testing already follows.
+
+**Needs from you:** nothing yet.
+
+**Next:** Stage 20, paid trials — deliberately last, since it's the one
+remaining piece that touches the payment path itself.
