@@ -32,7 +32,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
 **Still on mocks:** the agent, and nothing else. Comments and likes have API modules and no UI, deliberately.
-**Sales (Stage 16) are on screen as of 2026-09-08** — a countdown on the listing, and start/extend/end on the manage screen. Paid trials and the rebuilt agent have no UI yet.
+**Sales (Stage 16) and paid trials (Stage 20) are both on screen and tested as of 2026-09-08.** A sale shows a countdown on the listing and is started, extended or ended from the manage screen. A trial runs the real build by the minute, with the credit coming off the price on purchase. **The rebuilt agent is the only surface left with no UI.**
 **Untested:** cloud saves (no build we have writes to storage), and **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run.
 **Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real.
 **Next:** a contract catch-up pass for Stages 17–20, then sales, then paid trials, then the agent. None of the three depend on each other.
@@ -1073,3 +1073,137 @@ into `serializeGame`. I have deliberately not built an N+1 workaround for it.
   deadline that has been announced is a promise to whoever read it.
 
 **Next:** paid trials (§19), then the agent (§18). Taking your order from §20.
+
+### 2026-09-08 (3) · Frontend · Suparno
+
+**Blocked, and it needs one change on your side.** I built what I could of
+trials and stopped short of the part that takes money, because that part
+cannot deliver anything yet.
+
+**A trial cannot hand over the build.** A chunk creates a `sales` row with
+`kind: "trial_chunk"` and, correctly, no `game_keys` row — so `hasEntitlement`
+is false, and `GET /:id/build.zip` refuses with `NOT_OWNER`. `/:id/download`
+does not help either: it reduces what is *owed* by the credit, but it is still
+a purchase, so a trialist has no path to a runnable build at all.
+
+That makes "try before you buy" impossible to offer honestly. Buying a chunk
+would take real money and hand back `{ chunkMinutes, settlementTxId }` and
+nothing to play, so I have not shipped the button. §20 assumes the trial boots
+the real game on the isolated origin, which is the right design — there is just
+no route that serves it.
+
+**The fix looks small, and consistent with your own framing.** `build.zip`
+already gates on entitlement; it could also pass when
+`trialChunksFor(game.id, accountId).length > 0`. Your comment in
+`game.routes.ts` says a trial "can't be technically enforced, only honoured"
+precisely because the build is unpacked in the browser — so one chunk buying
+the build outright is already the security model, and the timer is the client's
+promise to keep. If you would rather it were a separate route
+(`/:id/trial/build.zip`) so the entitlement check stays untouched, that works
+just as well from here; it is one constant either way.
+
+**Shipped in the meantime, all of it real:**
+
+- **Trial config on the manage screen.** Chunk price, minutes, and the cap, with
+  the worst case computed live as the developer types and the
+  `chunkPrice × maxChunks ≤ price` rule shown before it is enforced. Set and
+  cleared together, matching what the route requires.
+- **Trial credit on the listing.** When someone has credit on a game, the buy
+  box says so and says they pay the difference. Nothing on this side subtracts
+  it — `/download` does, and a second opinion computed here could only ever
+  disagree with the one that moves money.
+- **`src/api/trials.ts` is complete**, `buyChunk` included. When the build route
+  opens up, the remaining work is the session HUD, not the payment path.
+
+**One honest note about the config panel:** it tells the developer, in the
+panel, that buyers cannot use the trial yet. Someone who turns it on and sees
+no change on their own listing would otherwise reasonably think it was broken.
+
+**Next:** the agent (§18), unless you would rather I wait for the build route
+and finish trials first. Either order suits me.
+
+### 2026-09-08 (4) · Frontend · Suparno
+
+**Trials are done, and I made the two server changes myself** rather than
+leaving them as asks. Both are on `frontend-integration` in CGS-server, both
+small, and both are things the existing code already assumed. Please read them
+before merging — they are in your payment core.
+
+**1. `build.zip` now also serves an account holding trial chunks.**
+A chunk creates a `sales` row and, correctly, no `game_keys` row, so
+`hasEntitlement` was false and a trialist had no path to a runnable build at
+all. It passes now when `trialChunksFor(...)` is non-empty.
+
+I took your own framing as the licence for this: your note above `/:id/trial`
+says a trial "can't be technically enforced, only honoured", because the build
+is unpacked in the browser. Whatever gate sits there, whoever holds the zip
+holds it. So the honest line is the one matching what was sold — money changed
+hands for access, and the clock is the client's promise. The frontend keeps it:
+when the time runs out the frame is covered.
+
+**2. The purchase path was throwing trial credit away.**
+This one is worth a careful look. `/download` prices a purchase by subtracting
+the **authenticated** caller's credit, and your comment there says as much:
+*"`creditUnits` was computed once, above, from the same authenticated caller
+this challenge was built for."* But `readChallenge` and `settle` in
+`services/x402/pay.ts` fetch that route from the server to itself with **no
+Authorization header**, so `req.auth` was undefined, `creditAccountId` was
+null, and every purchase was quoted at full price with the credit left sitting
+in the table.
+
+The fix carries the buyer's own bearer token on the `PaymentIntent` and sends
+it on both the challenge read and the settle retry — both runs have to agree on
+the number or `findMatchingRequirements` would not match. Nothing new is
+trusted: it is the same token that already authenticated `/pay/prepare`, held
+in memory for the ~100 seconds an intent lives, never logged or persisted.
+
+**Worth knowing:** this changes the ordinary purchase path too, not just
+trials. Anyone with no trial credit is quoted exactly what they were quoted
+before, so the blast radius is "credit now applies", but it is your payment
+core and you should be the one to agree with it.
+
+**On the frontend:** a "Try it" button under Buy showing the *worst case*
+rather than the chunk price, the real build booted on the isolated origin, a
+corner meter with the time left and the credit so far, buying the next chunk
+while the current one still runs, and buying the game outright from inside the
+session without the game stopping. Trial config sits on the manage screen with
+the worst case computed live.
+
+**Next:** the agent (§18), which is the last one.
+
+### 2026-09-08 (5) · Frontend · Suparno
+
+**Trials are tested end to end and done.** Bought a chunk, played the real
+build, bought the next one while the first was still running, let one expire,
+and bought the game from inside the session — charged the price minus the
+credit, with the game still running underneath. Both server changes from the
+previous entry are exercised by that path and both behaved.
+
+**One bug found in testing, and it was not in the trial.** A single press
+bought **two** chunks. `LightsDown` — the boot sequence shared by buying and
+playing — carried a comment saying it "started exactly once" and had nothing
+enforcing it. StrictMode mounts, unmounts and mounts again in development, so
+the effect ran twice, and its `cancelled` flag only suppresses state updates:
+the `await` already in flight settles regardless.
+
+**Worth your attention because it reaches purchases too.** A purchase survived
+only because a payment intent is single-use — the second run's `complete` gets
+`PAYMENT_INTENT_EXPIRED`, and `buyGame` **retries on exactly that code**, which
+prepares a fresh intent and pays again. So the ordering decided whether someone
+was charged twice. If you ever saw duplicate or orphaned intents for one user
+and game in a short window, or a purchase that "didn't go through" and then
+worked, this is a strong candidate for why.
+
+Fixed on our side with a `started` ref that makes the claim true, plus a `live`
+ref that a StrictMode remount re-arms so the run that did start can still
+report progress. **Nothing on your side needs changing** — the intent being
+single-use is what limited the damage, and that behaviour was correct.
+
+**Also fixed:** the profile menu claimed "none yet" beside My games for people
+with a library. It was counting `ownedGameIds`, which is one tab's optimism
+about what was just bought rather than the library, so it is empty after any
+reload. The count is gone rather than made correct; a real one needs a fetch
+that menu has no reason to make.
+
+**Next:** the agent. It is the last one, and the only surface of yours still
+without a screen.
