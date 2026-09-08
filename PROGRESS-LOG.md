@@ -39,8 +39,8 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, and Stages 10–16 close out almost everything the product-gap review found. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
-**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. An agent with its own wallet and its own on-chain identity watches the public listings topic and buys with no human present. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
+**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–18 (sales, the agent rebuilt as one-per-person) are on the unmerged `agent` branch. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, and Pinata. No route returns `501`.
+**Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
 - **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
 - **Everyone has a handle and a public profile** — reviews, comments and game credits link to a real person, not a truncated address.
@@ -51,7 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
-**Next:** not engineering. Deploy is the biggest gap and nothing blocks it. The agent is an open design question rather than a build task — four designs were considered and rejected, so it is deliberately unscheduled. Devlogs/following and curated browsing stay open on purpose.
+**Next:** Stage 19 on `agent` — the decision layer, an inference endpoint the agent pays to call, ask-first mode. Needs a `GROQ_API_KEY`. Off `agent`: deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
 
 ---
 
@@ -85,7 +85,9 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Settlement asset | USDC `0.0.429274` (6dp) | Matches the USD pricing in the frontend types. HBAR is the fallback. |
 | GameKey treasury | Platform operator, no wipe/freeze/pause keys | Studio treasury would mean a sleeping dev blocks their own sales. Missing keys = we can't claw back a purchase, checkable on HashScan. |
 | GameKey mint | On demand, async after payment settles | Keeps chain latency off the instant-play moment. |
-| Agent watcher | Mirror Node polling, 5s, saved cursor | Restart-safe and easy to demo. |
+| Agent watcher | ~~Mirror Node polling, 5s, saved cursor~~ **Superseded 2026-09-08** — one HCS topic subscription for every agent | Polling cost scaled with agent count; 25 agents alone used a fifth of the public Mirror Node's rate budget. A subscription costs the same whether one agent exists or a thousand. `listener_state`'s saved cursor still does the restart-safety job it always did. See `docs/stage-18.md`. |
+| Agent shape | ~~One wallet per watched game~~ **Superseded 2026-09-08** — one wallet per **person**, N wanted games, one shared budget | Three later designs to make the 1:1 shape worth pitching all failed for the same reason: they put the agent on the buyer's taste instead of on allocation. See `docs/wishlist-agent-spec.md` §14 and `docs/stage-18.md`. |
+| Agent purchase, who owns the result | The real buyer's account, via an `x-owner-account-id` header honoured only for a verified agent payer | The agent pays with its own wallet; the game has to land with the human it's working for, or the purchase is pointless. Caught by Stage 18's own test before it shipped. |
 | Delisted games | Owners keep access | Delisting hides from catalog only. |
 | Shared types package | None | Three repos, not a monorepo. Not worth the packaging overhead. |
 | Database | Neon (managed Postgres) | One shared cloud DB, nothing to install locally, same place for dev and deploy. |
@@ -113,7 +115,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 |---|---|---|
 | Running builds get their own origin | `VITE_PREVIEW_ORIGIN`, a subdomain | The iframe needs `allow-same-origin` or Godot, Unity and Construct all die on boot. On the app's origin that hands a stranger's game the session and the DOM. **This applies to real published builds too, not just local previews.** Same shape as itch.io's `html-classic.itch.zone`. |
 | Splits are public on every listing | handle, role and percent | It's the pitch, so the API has to return handles and roles rather than addresses and numbers. |
-| The agent lives on the game listing | Not a page of its own | Buying and setting a price trigger are the same decision made two ways. Agents are per game, so several can watch at once. |
+| The agent lives on the game listing | ~~Not a page of its own~~ **Stale as of 2026-09-08** | The backend redesign made the agent one-per-person, not one-per-game — see INTEGRATION.md §18. Likely needs its own page or panel now, with a "want" (max price + note) set from the listing instead. Still mocked on the frontend either way. |
 | Checkout is an overlay, not a route | | The claim is that the game boots in the same tab. A navigation unmounts the page and breaks exactly what we're claiming, which also means the payment call's latency is visible and budgeted. |
 | Whole UI on mock data before any integration | | Lets the design and the flows be validated without waiting on the backend or Privy. Integration is a later, deliberate phase. |
 | Money in the UI | `priceUsd` for display only | All arithmetic will use `priceUnits`. Nothing does money math on a float. |
@@ -762,3 +764,40 @@ changed except the two contract notes above.
 **Next:** Stage 18, the agent itself — one agent per person with N wants and a
 shared budget, an HCS subscription replacing the per-agent poller, the
 deterministic decision path, and the double-buy fix. No model involved yet.
+
+### 2026-09-08 (3) · Backend · Priyanshu
+
+**Still on `agent`, still unmerged.** Stage 18: the agent itself, rebuilt.
+
+**Shipped: one agent per person, not one per game.** One wallet, one shared
+budget, several **wants** (a wishlist row with a max price and a note). The
+old per-agent Mirror Node poll is gone, replaced by a single HCS topic
+subscription covering every agent at once — cost no longer scales with agent
+count. Buying is deterministic: soonest-ending sale first, ties by price. No
+model yet.
+
+**Changes the contract:** INTEGRATION.md §18, replacing `/api/agents`
+entirely (both old routes now 404). New: `/api/me/agent` (create/status/
+retire), `/api/me/agent/decisions`, and `PATCH /api/games/:id/wishlist` to set
+or clear a want. `GET /api/me/wishlist` rows carry `agentMaxUnits`/`agentNote`
+instead of the old per-row `agent` object.
+
+**A real bug caught by the stage's own test, not shipped:** the agent pays with
+its own wallet, so the settlement path was minting the purchased game to the
+*agent's* account instead of the buyer's — an agent "buying" a game the actual
+person could never play. Fixed before anything used it.
+
+**Also new:** an agent can optionally claim an ENS subname, same registry and
+availability check a studio uses.
+
+**Tested:** 30 assertions against real infrastructure — real wallet, real
+funded account, real HCS message delivered over the new subscription, real
+settlement, real GameKey landing in the buyer's account (not the agent's),
+real refund, real ENS mint with a real collision check. Concurrency verified
+with a live server's own listener racing the test on purpose.
+
+**Needs from you:** nothing yet — no screen calls the new routes.
+
+**Next:** Stage 19, the decision layer — an inference endpoint the agent pays
+to call, ask-first mode, and `agent_decisions.reasoning` actually getting
+filled in. Needs a `GROQ_API_KEY`.

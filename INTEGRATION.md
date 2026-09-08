@@ -114,8 +114,12 @@ POST   /api/studios/:id/leave           leave a studio you're on
 POST   /api/studios/:id/transfer        { toMemberId } — founder only
 GET    /api/invites/:id                 public — the emailed link lands here
 POST   /api/invites/:id/accept
-POST   /api/agents                      returns a wallet address to fund
-GET    /api/agents/:id                  status, balance, trigger
+POST   /api/me/agent                    create — see §18
+GET    /api/me/agent                    status, live balance
+PATCH  /api/me/agent                    change mode / timeout / expiry
+DELETE /api/me/agent                    retire, refund
+GET    /api/me/agent/decisions          audit trail, newest first
+PATCH  /api/games/:id/wishlist          set or clear a want — see §18
 GET    /api/users/:handle               public profile — see §11
 GET    /api/users/handle-availability   ?handle=
 PATCH  /api/me/profile                  display name, handle, bio, library visibility
@@ -764,8 +768,7 @@ itself on a double click.
                "savedAtUnits": 500000, "savedAtUsd": 0.5,
                "changeUnits": -250000, "percentOff": 50,
                "stillForSale": true,
-               "agent": { "id": "…", "status": "watching",
-                          "triggerPriceUnits": 300000 } } ] }
+               "agentMaxUnits": 300000, "agentNote": "if it's still fun-looking" } ] }
 ```
 
 `percentOff` is the headline — it's the price now against what it cost when
@@ -777,10 +780,9 @@ cheaper" banner needs no client-side arithmetic.
 purpose — someone who saved it should learn what happened to it rather than find
 a gap. Only a `removed` game disappears.
 
-`agent` is non-null when this person has a wishlist agent watching this game.
-Where there isn't one, that's the natural place to offer setting one up: the
-agent is the paid upgrade of the free thing, not a separate feature. Creating an
-agent now also adds the game to the wishlist.
+`agentMaxUnits` is non-null when this wishlist row is also a **want** — see §18.
+There's one agent per person now, not one per game, so this replaced the old
+per-row `agent` object.
 
 ### Price drops
 
@@ -1049,3 +1051,71 @@ Both the start *and* the end of every sale are written to the public HCS topic,
 and the message carries `endsAt`. That means the deadline isn't our claim — it's
 on a public ledger before the sale even matters. Same verifiability story as the
 price history in §10.
+
+---
+
+## 18. The wishlist agent
+
+**Rebuilt as one agent per person, not one per game.** One wallet, one shared
+budget, several **wants** — a wishlist row upgraded with a max price and an
+optional note. `POST /api/agents` and `/api/agents/:id` are gone; both 404 now.
+
+```
+POST /api/me/agent
+{ "mode": "autonomous", "onTimeout": "buy", "expiresAt": "2026-12-01T00:00:00Z",
+  "ensLabel": "kai-agent" }             // ensLabel optional
+```
+
+`mode` is `"autonomous"` (buys on its own) or `"ask"` (asks first — not wired
+up yet, see below). `ensLabel` claims a subname the same way a studio does;
+omit it and the agent has no name, just an address. Returns a wallet address —
+fund it like any withdrawal destination:
+
+```json
+{ "id": "…", "status": "draft", "agentAccountId": null,
+  "agentEvmAddress": "0x…", "ensLabel": "kai-agent", "ensTxId": "0.0.x@…" }
+```
+
+`GET /api/me/agent` once funded:
+
+```json
+{ "id": "…", "status": "watching", "balanceUnits": 500000, "balanceUsd": 0.5,
+  "mode": "autonomous", "expiresAt": "…", "ensLabel": "kai-agent" }
+```
+
+`status` moves `draft` → `funded` → `watching` on its own once money lands and
+identity anchors — nothing to poll for beyond `GET`. `DELETE /api/me/agent`
+retires it and refunds whatever's left, in one step, no separate withdrawal.
+
+### Wants
+
+```
+PATCH /api/games/:id/wishlist
+{ "agentMaxUnits": 300000, "agentNote": "if it's still fun-looking" }   // set
+{ "agentMaxUnits": null }                                                // clear
+```
+
+Requires an agent to already exist (`422 NO_AGENT` if not — create one first).
+Also checked live against the Mirror Node, not a cached balance: `agentMaxUnits`
+can't exceed what the agent's wallet actually holds right now.
+
+### What it does
+
+The agent buys a want the moment the game's price drops to or below
+`agentMaxUnits` **and** it's still unowned, picking whichever wants currently
+fit its balance if several qualify at once (soonest-ending sale first). No
+model is involved yet — `mode: "ask"` is accepted but behaves like autonomous
+for now; the ask-first flow is still being built.
+
+A purchase notifies once per decision, not once per game — buying three wanted
+games in one pass is one `agent_purchased` notification and one email, not
+three. `GET /api/me/agent/decisions` is the audit trail: what was considered,
+what was bought, newest first.
+
+**The game lands in your library, not the agent's**, even though the agent's
+wallet paid — that's the whole point of delegating the budget rather than the
+taste. Nothing to build for this; it's the same `GET /api/me/library` as any
+other purchase.
+
+An agent past `expiresAt` retires and refunds itself automatically, the same
+`agent_expired` notification/email shape as a manual `DELETE`.
