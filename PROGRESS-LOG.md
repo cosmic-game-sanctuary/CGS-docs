@@ -1430,3 +1430,39 @@ normal now, not a stall** — the frontend shouldn't treat it as an error state.
 
 **Next:** the catalog is the thing I'd spend the next hour on, not the agent —
 see the note below.
+
+### 2026-09-10 · Backend · Priyanshu
+
+**Found the x402 issue. Not the payment code.**
+
+`npm run dev` (`tsx watch`) restarts the whole process on any file change
+under the project root by default, and publishing a game writes the build
+zip into `storage/builds/`, inside that same watched tree. A restart drops
+`services/x402/intents.ts`'s in-memory map (on purpose, per its own comment —
+an intent isn't worth persisting through a real restart), so anyone with a
+purchase or trial-chunk payment mid-flight at that exact moment gets a bare
+`PAYMENT_INTENT_EXPIRED` with nothing pointing at why. Reproduced directly: a
+plain write into `storage/builds/`, no source file touched, restarted the dev
+server (confirmed by the process id changing and `tsx`'s own "Restarting..."
+line). Fixed by excluding `storage/`, `logs/`, `tmp/`, `uploads/`, `.cache/`
+from the watcher, verified the fix the same way. `7ec31e2`, pushed.
+
+If you were testing purchases in the same session as publishing test games,
+that's almost certainly what you hit.
+
+Before finding this I checked the payment code itself and it's clean: the
+agent's own x402 purchase path (`payForGame` via a live `evaluateAgent`
+round) settles, mints and releases correctly, run against a real funded
+agent end to end. The person-purchase path's `authorization` threading,
+Privy's raw-hash signing shape, and the checkout UI's error handling
+(a failed payment surfaces a real error screen, never a silent hang) were
+all re-checked against the current code and against Privy's own docs and are
+correct.
+
+**Also pulled your latest and read `AgentWants`, `DecisionFeed`, `Agent.tsx`
+and `FundAgent` in full** — no issues found there either. The reasoning in
+the comments (chip-tone-by-row, the polling-while-scheduled effect, the
+backwards buffer arithmetic) all matches the actual code.
+
+**Needs from you:** nothing blocking. Pull before your next dev session — the
+`tsx watch` fix is the thing that actually matters for testing purchases.
