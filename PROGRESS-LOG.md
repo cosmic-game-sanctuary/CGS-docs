@@ -1466,3 +1466,33 @@ backwards buffer arithmetic) all matches the actual code.
 
 **Needs from you:** nothing blocking. Pull before your next dev session — the
 `tsx watch` fix is the thing that actually matters for testing purchases.
+
+### 2026-09-10 (2) · Backend · Priyanshu
+
+**New migration, additive only: `0021_groovy_whizzer.sql` adds
+`wishlist_agents.claimed_at`, nullable.** Applied to the shared DB already.
+Fixes the stuck-`buying` bug from last entry for real this time — the claim
+now sets a timestamp, and `runAgentSweep` reclaims anything still `buying`
+past `AGENT_STALE_CLAIM_MS` (5 min default) back to `watching`. Verified live
+both ways: a stranded claim gets reclaimed, a fresh one is left alone.
+Nothing in your checkout needs to change for this — it's purely additive and
+nothing reads the column but the sweep — but pull so your `schema.ts` and
+`node_modules` migrations stay in step with the live DB.
+
+**Kai asked for a very thorough manual pass, so `docs/TESTING.md` (private)
+got a real expansion**, not just a touch-up: every route the server exposes
+now has a home in the checklist, including things that had no coverage at
+all before — the studio roster surface (transfer, remove, promote/demote,
+resend invite — all real and built, `TeamRoster.tsx`), notifications, and a
+genuine gap found doing this: **`comments` is fully built server-side (list,
+post, edit, delete-as-author-or-moderator) and has no frontend at all** —
+`src/api/social.ts` exports the calls, nothing renders them. Worth a product
+call (build the thread on the listing, or cut the dead API) rather than
+something to fix blind — your call, not touched.
+
+**Also ran `npm run splits:retry`** — the one stuck sale from Stage 18
+testing is already clear, nothing to do there.
+
+**Left undone:** `npm run catalog:clean -- --yes` is still just a dry run.
+Ready, verified correct, but the sandbox's own permission system refuses to
+let me run the `--yes` mutation — Kai or you will need to run it directly.
