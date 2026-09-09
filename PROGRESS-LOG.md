@@ -1263,3 +1263,100 @@ hold was invisible outside the database.
 
 **Needs from you:** a look at those three `decide.ts` changes and the wind-down.
 Everything else on this side is ours.
+
+### 2026-09-09 · Frontend · Suparno
+
+**Shipped:** the agent's decision rule, rebuilt around *when* it spends. Still
+not tested end to end, so treat it as a proposal you can read the diff of.
+
+**The bug in yesterday's fix.** I made `needsJudgement` ask whether a purchase
+forecloses another want, which was right and not enough. A round still only
+happened when a price moved, so the first game to go on sale was the only thing
+eligible, and the model was asked a question that had one answer. Two games a
+buyer wants do not go on sale in the same second, so the contested round the
+whole feature exists for was still unreachable.
+
+**A round is now scheduled rather than triggered.** It happens when something
+reaches its wire, `PURCHASE_BUFFER_MS` before its sale ends, or when nothing
+eligible has a deadline at all. `roundIsDue`, `nextWire` and `atWire` in
+`services/agent/decide.ts` are the whole scheduler; the sweep fires them off the
+`decide_by` column that was already there. A price event now usually just
+reschedules and spends nothing, which is the behaviour we wanted and did not
+have.
+
+**Changes the contract:** nothing on the wire, but three things inside the agent
+that are worth your eyes.
+
+- **`RawVerdict.hold` is gone**, along with `holdHours`. It was a second waiting
+  mechanism sitting beside the schedule and disagreeing with it, and it could
+  hold a game past the last moment it could still be bought. A verdict is now
+  buy or decline.
+- **A `held` row means "decide at this time", not "buy this at this time".**
+  When `decide_by` arrives the row is deleted and the round is re-run against
+  live prices, balance and ownership. Everything the wait was for happened in
+  between, so replaying the original plan throws away the point of waiting. A
+  superseded schedule is deleted rather than resolved, so the decisions feed
+  stays a record of decisions.
+- **`PURCHASE_BUFFER_MS` reads `AGENT_PURCHASE_BUFFER_MS`**, defaulting to the
+  same hour. The wind-down reads the same constant, so the two stay in step.
+  **Read the arithmetic before you touch it**, because I got it backwards in my
+  own notes first: the decision lands at `endsAt - buffer`, so the wait is the
+  sale's remaining length *minus* the buffer, and lowering it makes the wait
+  longer. What it buys is short test sales, since a sale shorter than the buffer
+  is already past its wire the moment it starts. `buffer 2m + sale ending in 7m`
+  decides in five. There is a worked pair in `.env.example`.
+
+**Two smaller ones in the same area.** `needsJudgement` tested "something was
+left over" before "can it afford anything", and the first is trivially true when
+the plan is empty, so an agent with a spent wallet was paying for verdicts about
+games it could not buy. And the `agentMaxUnits` validation message in
+`game.routes.ts` said "your agent's wallet holds 0", in raw units, which is the
+one refusal a person hits routinely.
+
+**Checked rather than assumed:** `windDownPromotion` and `extendPromotion` both
+already re-announce on the listings topic. That is load-bearing now. Without it,
+a sale wound down from three days out to one hour would leave an agent asleep
+until long after it ended, holding a schedule made against the old deadline.
+
+**Needs from you:** the same look as yesterday, now over a bigger change. In
+particular whether you agree that deciding at the wire is worth the schedule it
+costs, and whether dropping `hold` loses anything you had a use for.
+
+**Next:** testing all of it, then likes and comments.
+
+### 2026-09-09 (later) · Frontend · Suparno
+
+**Shipped:** the wire-scheduled agent, now actually run rather than only built.
+
+**It works.** Two games on sale at $1.00 with $1.20 in the wallet: it sat through
+both sales starting without spending, decided at the first game's wire, bought
+one and passed on the other. That is the scenario this feature exists for and it
+had never once been reachable before today.
+
+**Changes the contract:** nothing new beyond this morning's entry. Three fixes
+found by running it.
+
+- **The prompt taught the model to name a game wrong.** Asked for one sentence of
+  justification it wrote "I chose the LAST CHANCE game", repeating the prompt's
+  own internal marker back as a title. The sentence is now off the agent screen
+  entirely: it is still written to `agent_decisions.reasoning` and to the round's
+  log line, where it is useful, and the prompt tells the model to name games by
+  title. If you ever want it back on screen, that is a UI change, not a data one.
+- **A `declined` row struck through every game, including the one the same round
+  had just bought.** `chosenGameIds` holds the rejects on a `declined` row and
+  the winners on a `bought` row, so "everything not chosen" means opposite things
+  on the two rows a single round writes. Frontend-only fix.
+- **`AGENT_PURCHASE_BUFFER_MS` works the opposite way to how it reads**, and I
+  documented it backwards in four places yesterday. The decision lands at
+  `endsAt - buffer`, so lowering it makes the wait *longer*. `.env.example` and
+  the comment in `config/env.ts` now carry the worked pair. Nothing in the code
+  was wrong; only every note about it.
+
+**Housekeeping:** rebased local `main` onto `origin/main`. Your `catalog:clean`
+came in clean, no conflicts with the agent work.
+
+**Needs from you:** unchanged. A look at the three `decide.ts` changes, the
+dropped `hold`, and the wind-down.
+
+**Next:** the four agent cases still unrun (the second wire, a plain price cut,
+ask-first, the wind-down), then likes and comments.
