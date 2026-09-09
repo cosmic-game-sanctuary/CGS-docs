@@ -1114,16 +1114,25 @@ can't exceed what the agent's wallet actually holds right now.
 
 ### What it does
 
-The agent buys a want the moment the game's price drops to or below
-`agentMaxUnits` **and** it's still unowned, picking whichever wants currently
-fit its balance if several qualify at once (soonest-ending sale first). That
-much never calls a model and never costs anything beyond the games themselves.
+A want becomes buyable when the game's price is at or below `agentMaxUnits`
+and it's still unowned. Working that out never calls a model and never costs
+anything beyond the games themselves.
 
-**When more is eligible than the balance covers**, a real model call decides
-what to do with the rest — buy some now, hold others for a bounded wait (only
-ever when there's a real sale deadline to bound it), or decline. This is the
-only thing that spends on "thinking" rather than games, and it's small and
-reported separately — see `GET /api/me/agent/decisions`'s `inferenceCostUnits`.
+**It does not buy the instant a price drops.** A sale is open until it ends,
+so waiting costs nothing and what arrives while it waits can change the
+answer. The agent decides at the **wire** — an hour before the soonest sale
+it's watching ends — so that one decision sees everything that showed up in
+between. A price drop usually just moves that alarm clock and spends nothing.
+Where nothing eligible has a deadline at all, there's nothing to wait for and
+it decides immediately.
+
+**At that round, when the balance can't cover everything eligible**, a real
+model call decides what to buy and what to pass on. This is the only thing
+that spends on "thinking" rather than games, and it's small and reported
+separately — see `GET /api/me/agent/decisions`'s `inferenceCostUnits`.
+
+For the UI this mostly matters in one way: **a want sitting there unbought
+during a live sale is normal, not a stall.** It's waiting for the wire.
 
 A purchase notifies once per decision, not once per game — buying three wanted
 games in one pass is one `agent_purchased` notification and one email, not

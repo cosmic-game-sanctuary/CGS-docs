@@ -1360,3 +1360,73 @@ dropped `hold`, and the wind-down.
 
 **Next:** the four agent cases still unrun (the second wire, a plain price cut,
 ask-first, the wind-down), then likes and comments.
+
+### 2026-09-09 (3) · Backend · Priyanshu
+
+**Reviewed W9 as asked, pulled and read end to end. Verdict: keep it, it's
+right, and it's a better change than the one it replaced.** Answers to your
+three questions, then one bug it doesn't cause but does make more expensive.
+
+**Is deciding at the wire worth the schedule it costs?** Yes, and the argument
+is stronger than "it's tidier". Before this the contested round was not merely
+rare, it was *unreachable* — you're right that two games never go on sale in
+the same second, so the model was always asked a question with one answer and
+we were paying for inference to rubber-stamp a foregone conclusion. The wire is
+what makes the word "allocation" true rather than a slogan. The cost is one
+extra column read in a sweep that already runs every five seconds. Cheap.
+
+The database agrees, for what it's worth: `05:18` bought `ddzz`, declined
+`dddzzz`, one inference charge, and the reasoning names both games. That round
+could not have happened last week.
+
+**Does dropping `hold` lose anything?** No. Two waiting mechanisms that can
+disagree is a bug with a schedule attached, and the one that could wait past
+the last moment to buy was the wrong one to keep. A verdict being buy-or-
+decline also makes `sanitizeVerdict` simpler, which matters because it is the
+only thing between a model and real money.
+
+**The wind-down.** Checked rather than taken on trust: `windDownPromotion` and
+`extendPromotion` both re-announce, and the comments already say why. Agreed
+it's load-bearing now — worth being explicit that this is a *correctness*
+dependency, not a nicety. If anyone ever adds a path that changes `endsAt`
+without announcing, agents sleep through the new deadline and silently miss
+sales. That deserves a line in the hard rules, not just a comment.
+
+**The bug: an agent stranded in `buying` is dead forever, and nothing notices.**
+
+Found one live — agent `05d42b8d`, stuck 54 minutes, last round `12:36`. I
+released it, so your testing isn't blocked.
+
+The `finally` in `evaluateAgent` handles every in-process failure. What it
+cannot handle is the process not being there any more: kill the server mid-
+round (which is every restart during a testing session) and the row stays
+`buying`. `evaluateAgent` only ever claims from `funded`/`watching`, so that
+agent is never evaluated again — no error, no log line, no expiry. It just
+stops being an agent.
+
+**W9 raises the stakes on this rather than causing it.** Under the old
+behaviour a missed round meant "buy a bit later". Now the round *is* the
+decision point, so an agent that misses its wire doesn't buy late — it loses
+the sale outright, and the buyer sees a want sitting there through a sale that
+came and went.
+
+The fix is the standard one for a claim with no lease: give the claim a
+timestamp and let the sweep reclaim anything older than a couple of minutes. It
+needs a column (`claimedAt`, or reuse an `updatedAt` — `wishlist_agents` has
+neither), so it's an additive migration and a few lines in the sweep.
+
+**I have not touched it, deliberately** — you're still in `watcher.ts` for the
+four unrun cases and I'd rather not hand you a conflict. Say the word and I'll
+take it, or take it yourself if you're in there anyway.
+
+**Docs updated for W9**, since they described a mechanism that no longer
+exists: INTEGRATION.md §18 (the public contract said the agent buys the moment
+a price drops, and that it can hold — both now wrong), `wishlist-agent-spec.md`
+§4 Shape D and rule 4, and a banner on `stage-19.md`. The one line worth
+knowing is in the contract: **a want sitting unbought during a live sale is
+normal now, not a stall** — the frontend shouldn't treat it as an error state.
+
+**Needs from you:** nothing blocking. If you want the stale-claim fix, say so.
+
+**Next:** the catalog is the thing I'd spend the next hour on, not the agent —
+see the note below.
