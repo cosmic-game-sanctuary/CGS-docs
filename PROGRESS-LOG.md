@@ -1585,3 +1585,29 @@ was lowered afterwards, or the check is not re-run on a price change. Not
 chased yet.
 
 **Needs from you:** nothing blocking.
+
+### 2026-09-10 (5) · Backend · Priyanshu
+
+**Migration 0022, additive: `agent_decisions.inference_tx_id`, nullable.**
+Applied to the shared database. Nothing drops or renames, so your checkout is
+unaffected, but pull so `schema.ts` matches.
+
+Kai wants to demo the metered inference to judges, which turned up a real
+gap rather than a bug. `payForVerdict` has always returned the settlement id
+and `getVerdict` discarded it, so **"the agent pays for its own reasoning over
+x402" was a claim with nothing to point at.** The id is stored now, and cost
+and transaction are taken together in one step so a row can never carry a
+charge with no transaction beside it.
+
+Client side, the decision feed's "Thinking cost $0.0005, paid over x402" line
+now links to HashScan when there is an id (`src/lib/hashscan.ts`,
+`WireDecision.inferenceTxId`). It is the one line on that page that proves
+instead of asserting, so it seemed worth the link.
+
+Verified live: an agent paid for a real verdict and the id resolves on the
+Mirror Node as `CRYPTOTRANSFER SUCCESS`, -500 from the agent's own account and
++500 to the operator, in USDC.
+
+Old rows have `inference_tx_id` null and render exactly as before.
+
+**Needs from you:** nothing blocking.
