@@ -32,7 +32,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
 **Nothing is on mocks any more.** The agent has a screen; `src/mocks/agent.ts` is deleted. Comments and likes have API modules and no UI, deliberately.
-**Sales (Stage 16) and paid trials (Stage 20) are both on screen and tested as of 2026-09-08.** A sale shows a countdown on the listing and is started, extended or ended from the manage screen. A trial runs the real build by the minute, with the credit coming off the price on purchase. **The rebuilt agent is the only surface left with no UI.**
+**Sales (Stage 16) and paid trials (Stage 20) are both on screen and tested as of 2026-09-08.** A sale shows a countdown on the listing and is started, extended or ended from the manage screen. A trial runs the real build by the minute, **and as of 2026-09-11 it meters itself** — the corner meter buys each next chunk automatically, from the player's own wallet over x402, and stops the moment they leave. Credit still comes off the price on purchase. **The rebuilt agent is the only surface left with no UI.**
 **Untested:** cloud saves (no build we have writes to storage), and **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run.
 **Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real.
 **Next:** a contract catch-up pass for Stages 17–20, then sales, then paid trials, then the agent. None of the three depend on each other.
@@ -138,6 +138,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Unknown notification types | Skipped, never rendered | The enum grows on the backend and the client learns about it later. A `switch` with no default returned nothing and put a hole in the list the panel iterates, so one unrecognised row killed the bell. Skipping is the only behaviour that stays correct while the other side keeps adding. |
 | The cloud-save bridge | The host frame reads and writes the build's storage; no script is injected into the game | INTEGRATION.md §13 suggests injecting a script into the build's frame. It turned out not to be needed: `preview-host.html` is already same-origin with the build, so it is the one page living on both sides of the isolation boundary. The whole origin is snapshotted rather than a namespaced subset, because the keys belong to the game and the payload is meant to be opaque. |
 | Where managing a game lives | `/game/:slug/manage`, reached from the listing | Not behind the profile menu. Looking after a game is something you do to a specific game, not a place you go, and the IA rule is two pages, one action, wallet inline. |
+| How a trial keeps charging | A client-side loop in `TrialSession`, no server-side session or heartbeat | A trial chunk is already a silent browser-signed x402 payment; making it automatic is a `setTimeout` that tops up ~30s before the current chunk ends. Leaving unmounts the component and the loop is gone. There is nothing on the server to cancel because there is no server-side loop, which is the same "honoured, not enforced" stance the clock itself takes. Cap reached or a charge that fails stops the loop and offers a manual retry rather than hammering an empty wallet. |
 | Seed data | No build, no HTS token, on purpose | Pinning and minting spend real testnet resources, and the first purchasable game should come from the publish flow rather than a script that fakes its way past it. A seeded game browses and refuses to sell, which is the right answer for a row with no build behind it. |
 
 ---
@@ -1648,3 +1649,50 @@ Three commits, all pushed: `2203ffc` (client timeout), `7f46d0f` (trial
 config re-check), and the settle-timeout on the server.
 
 **Needs from you:** nothing blocking.
+
+### 2026-09-11 · Backend · Priyanshu
+
+Worked in CGS-client this session, with Suparno's go-ahead — the trial is a
+backend concern and the fix was on his side.
+
+**Shipped: the paid trial meters itself.** Once the build is up, the corner
+meter buys each next chunk on its own, roughly 30 seconds before the current
+one runs out. Every chunk is the same payment it always was — prepared by the
+server, signed silently in the browser by the player's own embedded wallet,
+settled over x402 through Blocky402 — only now a timer presses the button
+instead of a person. Leaving the trial unmounts the component and the loop
+stops with it, so nothing is ever charged for time nobody is playing. Hitting
+the chunk cap, or a charge failing (an empty wallet, usually), stops the loop
+and shows a "Keep playing" retry rather than retrying on a timer. This is the
+consumer-side twin of the metered-x402 route the wishlist agent already uses
+for its own reasoning: same rails, the player's wallet instead of the agent's.
+
+**The corner meter, redesigned but not restyled.** Two mono readouts now,
+Time left and Paid so far, the second ticking up as the meter runs. "Leave"
+is the plain first action; "Buy" stays because every cent spent still comes
+off it. The manual "+N minutes" button is gone — there is nothing to press
+any more. It lifts on hover like every other solid thing in the app rather
+than scaling as a flat box would.
+
+**The trial stall from the 10th (6) is fixed, and the cause is exact.**
+`LightsDown` cleared every timer it had registered on unmount, and each beat's
+floor timer was in that list. StrictMode's mount → unmount → remount fired
+that cleanup mid-beat, killing a timer whose promise was still being awaited.
+It never settled, the beat never advanced: "Buying 1 minutes" forever, with
+the payment already through and the money gone. Checkout only escaped it
+because it starts inactive and begins its run after that window. Floor timers
+now belong to the run and nothing can cancel them; the list holds the exit
+animation alone.
+
+Also removed the temporary `[cgs …]` console breadcrumbs from the 9th–10th.
+
+**Changes the contract:** nothing. The trial endpoints are untouched; the
+client just calls `prepare`/`complete` on a timer instead of on a click.
+
+**Needs from you (Suparno):** it's your repo. Touched `TrialSession.tsx` and
+`LightsDown.tsx`, plus breadcrumb removal in `api/purchase.ts`, `lib/api.ts`
+and `lib/previewHost.ts`. Committed on Priyanshu's machine, pull once it's
+pushed. Nothing structural moved — say so if the meter's new shape fights
+anything on the play surface.
+
+**Next:** nothing queued here.
