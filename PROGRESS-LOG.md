@@ -1541,3 +1541,47 @@ matter the moment the domain verifies.
 
 **Needs from you:** nothing blocking. Just pull the client before your next
 session.
+
+### 2026-09-10 (4) · Backend · Priyanshu
+
+**Suparno: a second client commit from me, sorry — `5c42272` and this one.
+Pull before you touch `previewHost.ts` or `purchase.ts`.**
+
+**The trial took the money and then hung forever, and it was ours, twice
+over.** The payment side is fine: the chunk settled, the sale row was written
+and the splits went out. Everything after that was the problem.
+
+`previewHost.send()` had **no timeout**. A host iframe that never answers, or
+a `contentWindow` that has gone away (optional chaining turned that into a
+silent no-op), left the promise unsettled forever. No error, no failure
+screen, nothing in the console, and the money already moved. There is a 90s
+backstop now and a real rejection when the frame is gone. **A payment path
+must not be able to wait forever** — an error someone can read beats a
+spinner that means nothing.
+
+Underneath that, `mountBuildFromPath` reported nothing between the download
+finishing and the build being ready. On a real build that gap is an inflate
+plus several hundred Cache API writes, so the bar parked at the end of the
+download for tens of seconds and looked *identical* to the hang above. The
+unpack stages drive the bar now, so the two are finally distinguishable.
+
+**`splits:retry` was itself broken, and it cost a real payout.** It only
+looked at `failed`. `split_status` starts at `pending` and only moves once
+distribution runs, so a process dying in between leaves a row that is never
+`failed` and carries no error — invisible forever. One had been sitting since
+2026-09-08 with the team unpaid. It now also takes anything `pending` for
+over ten minutes. Running it cleared that one plus a `failed` one from
+today's testing; both distributed for real.
+
+**Checked and healthy, so don't go looking:** the metered inference works.
+An agent paid 500 units over x402 for a verdict at 12:17 UTC today and got
+real reasoning back, and it now names the game by title rather than repeating
+the prompt's `LAST CHANCE` marker at us — your prompt fix landed.
+
+**One config worth a look, yours or mine:** `round-3` has a trial of $1.00 x 5
+chunks against a $3.00 price. `trialConfigFits` should refuse a worst case
+above the price, so either it was set when the price was higher and the price
+was lowered afterwards, or the check is not re-run on a price change. Not
+chased yet.
+
+**Needs from you:** nothing blocking.
