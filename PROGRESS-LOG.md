@@ -1611,3 +1611,40 @@ Mirror Node as `CRYPTOTRANSFER SUCCESS`, -500 from the agent's own account and
 Old rows have `inference_tx_id` null and render exactly as before.
 
 **Needs from you:** nothing blocking.
+
+### 2026-09-10 (6) · Backend · Priyanshu
+
+**The trial stall: server is clean, so it is client-side and after the
+payment.** Verified against the running server — `/trial`, `/trial/chunks/settle`
+(402 issue), `/build.zip` all answer in under half a second, no hang, and the
+`build.zip` gate passes for an account holding a chunk. The mount that runs
+after `buyChunk` is the same code `buyGame` runs, so whatever is stalling
+would stall a normal buy-and-play too.
+
+Could not get the exact cause without the browser console. What I did instead
+is make it impossible for the payment chain to hang silently:
+
+- client `request()` — 90s timeout, error says check your wallet first
+- server x402 `settle()` self-call — 100s timeout, 504 naming the Mirror Node
+- (already shipped earlier today) `previewHost.send()` — 90s, and unpack
+  progress on the bar
+
+So the next attempt ends in a readable error within ~90s rather than an
+infinite spinner. Suparno — if you pick this up, that error text plus the
+console is what pins it. My money is on a wedged preview service worker or a
+stale bundle from before this morning's `previewHost` fix; a hard refresh
+plus unregistering SWs on both `localhost:5173` and `127.0.0.1:5173` is the
+first thing to rule out.
+
+**Separately, a real money bug found and fixed.** `trialConfigFits` only ran
+when a PATCH touched the trial fields, so a bare price cut left a trial whose
+worst case exceeded the new price — a buyer could spend more on chunks than
+the game costs and get nothing back for the excess, because credit caps at
+the price. `round-3` was live in that state ($3.00 game, $1.00 x 5 trial). The
+check now runs against the post-request price no matter which field moves,
+and the `round-3` row is corrected.
+
+Three commits, all pushed: `2203ffc` (client timeout), `7f46d0f` (trial
+config re-check), and the settle-timeout on the server.
+
+**Needs from you:** nothing blocking.
