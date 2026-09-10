@@ -1496,3 +1496,48 @@ testing is already clear, nothing to do there.
 **Left undone:** `npm run catalog:clean -- --yes` is still just a dry run.
 Ready, verified correct, but the sandbox's own permission system refuses to
 let me run the `--yes` mutation — Kai or you will need to run it directly.
+
+### 2026-09-10 (3) · Backend · Priyanshu
+
+**Suparno: I pushed one commit to CGS-client (`5c42272`). Pull before you
+touch it.** Kai asked me to fix a blank catalog directly, so I did rather than
+handing it back, but it is your repo and I have kept it to the two files.
+
+**The catalog rendered nothing while the corner correctly said "44 games".**
+`Reveal` observed at `threshold: 0.15`. That fraction is of *the observed
+element*, not of the viewport, so once the grid grew past roughly 6.7x the
+window height it became unreachable at any scroll position: the observer never
+fired, `data-shown` stayed false, and `[data-reveal] > * { opacity: 0 }` kept
+every card invisible. They were still laid out and still clickable, which is
+how Kai spotted it. The catalog crossed that line at about 44 games, which is
+why it appeared now and not a week ago.
+
+Threshold is 0 now, which is what a reveal actually means; the rootMargin
+already does the "not until it is properly in frame" part. I also capped the
+stagger at twelve steps (`min(var(--i), 12)`) — uncapped, 44 cards put the last
+one three seconds behind the first, and the tail of the page read as broken
+while it caught up. Both are commented at the site with the reasoning.
+
+**The trial is fine on the server, so the failure is on our side of the wire.**
+Re-checked against the live database: `deadzone-again` is the only configured
+trial (3c, 1 min, 10 chunks, $1.50 game), its build is on disk, and its
+`priceAsset` matches `X402_ASSET`. `GET /:id/trial` answers `enabled: true`
+with correct numbers and `/trial/chunks/settle` issues a real 402. Worth
+knowing while debugging: **`/trial/chunks/complete` is POST-only**, so opening
+that request in a browser tab answers `NOT_FOUND` no matter what.
+
+**Email has a real domain now.** `cgs.blackslate.me`, Namecheap, Resend region
+Tokyo. All three records (DKIM TXT on `resend._domainkey.cgs`, CNAMEs on
+`rsend.cgs` and `send.cgs` — note `rsend`, not `resend`) are published and
+resolving; Resend still says pending and re-verification is triggered. Once it
+flips, **an invite to someone who is not the Resend account holder will
+actually be delivered**, which has never once worked. `RESEND_FROM` is already
+pointed at the new domain — safe early, since an unverified domain is refused
+and logged exactly the way every non-account address was refused before.
+
+**`APP_URL` is still `http://localhost:5173`.** Every link inside every email
+points there. It has not mattered while mail only reached one machine. It will
+matter the moment the domain verifies.
+
+**Needs from you:** nothing blocking. Just pull the client before your next
+session.
