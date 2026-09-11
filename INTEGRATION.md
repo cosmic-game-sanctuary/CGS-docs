@@ -1194,13 +1194,22 @@ GET /api/games/:id/trial
   "chunksConsumed": 2, "chunksLeft": 8,
   "spentUnits": 60000, "spentUsd": 0.06,
   "creditUnits": 60000, "creditUsd": 0.06,
+  "owedUnits": 1440000, "owedUsd": 1.44,
   "asset": "0.0.429274", "assetDecimals": 6 }
 ```
 
 `enabled: false` (with everything else zeroed) means this game doesn't offer a
 trial — most games. Public: anyone can read the config. `chunksConsumed`,
-`spentUnits` and `creditUnits` are yours alone — signed out, or on a game that
-doesn't know you, they read zero.
+`spentUnits`, `creditUnits` and `owedUnits` are yours alone — signed out, or on
+a game that doesn't know you, they read zero (and `owedUnits` reads the full
+price).
+
+**`owedUnits` / `owedUsd` is what buying costs this caller right now**, credit
+already subtracted, from the same function `/download` prices a purchase with.
+Added 2026-09-11 because the client had no way to say what a purchase would
+cost after a trial and went on showing the undiscounted price. **Show this
+number, don't compute `price - credit` yourself** — a second opinion assembled
+on your side can only ever disagree with the one that moves money.
 
 **Worst case is knowable before the first chunk**: `chunkPriceUnits ×
 maxChunks`, always ≤ the game's price — enforced when a developer sets it, not
@@ -1226,7 +1235,15 @@ different URL, not a new integration. `409 TRIAL_CHUNKS_EXHAUSTED` means
 **Buy the next chunk while the current one is still running**, not after it
 ends, so a signature prompt never interrupts play. That's on you — the backend
 has no opinion about when a chunk is bought, only that each one is real money
-that lands the moment it settles.
+that lands the moment it settles. The client does this on a timer now
+(`TrialSession`), topping up ~30s out and stopping when the session closes.
+
+**Budget two counted requests per chunk, not four.** Settling calls our own
+gated route over loopback, and those self-calls are exempt from the rate limit
+as of 2026-09-11 — before that a metering trial spent four units a minute and
+walked into the ceiling mid-session. A `429` now answers in the normal error
+shape with `code: "RATE_LIMITED"`; it means slow down, not stop, so back off
+and retry rather than tearing the session down.
 
 No GameKey, no ownership, on a trial chunk — just five (or however many)
 minutes and a credit that's now a little bigger.

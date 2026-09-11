@@ -1696,3 +1696,139 @@ pushed. Nothing structural moved — say so if the meter's new shape fights
 anything on the play surface.
 
 **Next:** nothing queued here.
+
+### 2026-09-11 (2) · Backend · Priyanshu
+
+Four faults behind "the trial keeps breaking". Three were mine.
+
+**`429` mid-session, which is what killed the metering.** The global rate limit
+was 200 per 15 minutes **and it counted the server's own loopback settle
+calls** — `pay.ts` settles by calling our own gated route at `127.0.0.1`, twice
+per chunk. So one chunk cost four units instead of two, and a trial buying a
+chunk a minute walked into the ceiling partway through. On top of that
+`express-rate-limit` answers in plain text, which our clients parse as JSON and
+get nothing from, so it surfaced as a bare "Request failed (429)" with no hint
+a limit even existed. Now: loopback `/settle` is exempt, the ceiling is 1000,
+and a `429` comes back as `{ error: { code: "RATE_LIMITED", … } }`. Verified by
+header — five settle calls cost zero against the bucket.
+
+**The whole purchase UI kept quoting the full price after a trial**, even
+though the server already charges the credit-adjusted amount. `GET /:id/trial`
+now returns **`owedUnits` / `owedUsd`** — what buying costs that caller with
+credit taken off, from the same `resolvePurchasePrice` `/download` prices with,
+so nobody computes `price - credit` on their own side. On the client the trial
+fetch moved up to `GameListing`, which feeds it to the buy button, the
+`TrialPanel` (now presentational) *and* the checkout overlay, so all three show
+`owedUsd` and the "add funds" step stops asking for a top-up the purchase does
+not need. Verified against real data: `game` at $100 with $6 of chunks resolves
+to $94 owed, identical to what settlement charges.
+
+**"Build failed", then fine later.** `previewHost()` memoised its promise
+including a rejected one, so a host that lost one race to start poisoned every
+later mount in that tab until a full reload. A failure is no longer remembered,
+so a retry re-probes from scratch — an improvement, but not the actual cause.
+
+**The actual cause, found from a network trace: `reachable()`'s probe fetch had
+no timeout at all.** It HEAD-checks each twin origin before trying to connect,
+and on this machine `[::1]:5173` is routable-looking but nothing answers —
+Chrome's own TCP connect timeout is **over two minutes**, and with no
+`AbortSignal` the probe just sat there for the whole thing, well past
+`LightsDown`'s 2-minute boot-sequence ceiling. So the trial died with "Unpacking
+the build did not finish" before the loop ever reached `127.0.0.1`, which
+answers in 50ms. Not a race, and not something a retry fixed by accident: it
+fixed it by re-probing the twins in a different order some of the time. Now
+`reachable()` carries `AbortSignal.timeout(2000)` — confirmed with a bare fetch
+against a black-hole address that this cuts a hang to ~2000ms on the nose. Two
+seconds is generous for loopback and a rounding error next to two minutes.
+
+**403s in the console during a trial.** `GameStage` fired `POST /sessions` and
+`GET /saves` on mount, both of which need a GameKey the trial holder does not
+have. Harmless — the game ran — but noisy. A trial is deliberately ephemeral,
+so it now skips both: no cloud save it does not own, and a one-minute look is
+not a play worth counting. `LightsDown` forwards a `trial` flag to `GameStage`
+for this.
+
+**Also set `trust proxy` (`TRUST_PROXY`, default 0).** Not exercised yet, but
+the limiter buckets by `req.ip` and behind an unacknowledged proxy that is one
+bucket for the whole site. Worth having right before it is ever deployed.
+
+**Changes the contract:** `GET /api/games/:id/trial` gains `owedUnits` and
+`owedUsd` — additive, nothing removed. INTEGRATION.md §20 updated, including a
+note to show that number rather than subtracting credit yourself, and what a
+`429` now means. No migration; no schema change.
+
+**Frontend, again with Suparno's go-ahead:** the running meter lost its buy
+button. Playing already spends money and the meter says so; a second money
+button beside a live game is a misclick, not a choice. Buying is offered on the
+takeover when time is up, where the credit is the argument. The meter is also
+physically smaller, and a `429` now makes it back off (5s, 15s, 40s) and carry
+on rather than halt.
+
+**Needs from you (Suparno):** `TrialPanel` is presentational now — it takes a
+`trial: WireTrial | null` prop instead of fetching, and `GameListing` owns that
+fetch (keyed on the game, sign-in, and the open trial session). `GameStage` and
+`LightsDown` gained a `trial` flag. `CheckoutOverlay` takes optional
+`owedUnits` / `owedUsd`. Touched `TrialSession.tsx`, `TrialPanel.tsx`,
+`GameListing.tsx`, `CheckoutOverlay.tsx`, `GameStage.tsx`, `LightsDown.tsx`,
+`lib/previewHost.ts`, `api/trials.ts`.
+
+### 2026-09-11 (3) · Backend · Priyanshu
+
+**"First trial attempt always failed with a blank error, second worked" —
+found from a network trace, fixed in `CGS-client`, Suparno's go-ahead.** Two
+things stacked:
+
+- **`TrialPanel`'s button had no wallet-readiness gate; `CheckoutOverlay`'s Pay
+  button always has** (`disabled={!wallet.ready}`). Click "Try it" right after
+  a listing loads, before Privy's embedded wallet iframe finishes connecting,
+  and `useWalletSigner.signHashes` throws before any network call. The trace
+  showed exactly that: `prepare` succeeds (needs no wallet), then a burst of
+  `embedded-wallets?...` script loads — Privy lazily loading its signing
+  bundle for the first time — racing the failure. Second click works because
+  that bundle is already warm. Fixed by matching Checkout: the button now
+  disables and reads "Connecting wallet…" until `wallet.ready`, the same
+  pattern `FundAgent` and `WithdrawPanel` already used correctly.
+- **The specific error never reached the screen.** `errorMessage()` only read
+  `ApiError`; any plain `Error` — the wallet-not-ready message above, every
+  `BuildError`, and the boot sequence's own "did not finish, check your
+  wallet" timeout — collapsed to a bare "Something went wrong. Try that
+  again." A message written at a throw site is written to be shown; it now
+  falls back to `error.message` for any `Error`, not just ours.
+
+**Changes the contract:** none, client-only. **Needs from you (Suparno):**
+`TrialPanel.tsx` and `lib/api.ts`.
+
+**Next:** nothing queued.
+
+### 2026-09-11 (4) · Backend · Priyanshu
+
+**The trial was still failing on the first attempt, and this time the error
+was finally readable (the (3) fix above earning its keep): "Unpacking the
+build" did not finish.** Root-caused from the network trace in `CGS-client`,
+Suparno's go-ahead.
+
+`reachable()` in `previewHost.ts` HEAD-probes each candidate build origin
+before connecting to it, and that fetch had **no timeout at all**. On this
+machine, `[::1]:5173` is routable-looking but nothing answers, and a browser's
+own TCP connect timeout for that is measured in **minutes**. The probe just sat
+there — the network tab showed it still pending at **2.2 minutes** — which is
+well past `LightsDown`'s 2-minute boot-sequence ceiling. So the whole trial
+died before the loop ever reached `127.0.0.1`, which answers in 50ms. This was
+never a race and a reload never "fixed" it: every attempt on that machine would
+fail the same way until a reload happened to probe the twins in a different
+order. `reachable()` now carries `AbortSignal.timeout(2000)` — confirmed with a
+bare fetch against a known black-hole address that this cuts a multi-minute
+hang to ~2000ms on the nose. Two seconds is generous for a real loopback
+response and a rounding error next to the two minutes it was.
+
+Audited the rest of the client for the same class of bug (a `fetch` with no
+timeout at all): nothing else had it. Every other network call already carries
+one, most from this same investigation over the last two sessions.
+
+**Changes the contract:** none, client-only. **Needs from you (Suparno):**
+`lib/previewHost.ts`.
+
+**Next:** nothing queued. If a trial ever again dies on "Unpacking the build",
+check the Network tab for a `preview-sw.js` request still pending past 2s —
+that means the 2000ms itself needs raising on whatever machine hit it, not that
+this is the wrong fix.
