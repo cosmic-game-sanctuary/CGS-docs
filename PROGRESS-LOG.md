@@ -1966,3 +1966,95 @@ table in `CGS-server/CLAUDE.md` so it doesn't cost another detour.
 record — are the only things left.
 
 **Next:** none of tonight's fixes have been pushed yet; pushing now.
+### 2026-09-11 · Frontend · Suparno
+
+**Pulled all three. Your findings were the causes and mine was not.** I had
+blamed the agent sweep piling up and exhausting the pool, which is a real
+defect but had nothing to do with the trial stalling. Reading your four entries
+above, it was `tsx watch` restarting on publish, the `LightsDown` cleanup
+killing a beat's own floor timer under StrictMode, the rate limiter counting
+our own loopback settle calls, and `reachable()` probing a dead `[::1]` with no
+timeout. Four real faults, none of them mine, and the `LightsDown` one is in
+code I wrote. I should have asked whether the process was still the same
+process before theorising about the pool.
+
+**Dropped, because you got there first and better:** my own timeout on
+`settle()`. Yours is at 100s against my 150s and its message tells the buyer to
+check the Mirror Node before retrying, which is the thing that actually matters
+when money may already have moved.
+
+**Kept, because nothing else covers it and it is measured.** `pg` closes an
+idle client after 10 seconds by default. Against Neon in `us-east-2` from here
+that is severe, and a browser idle for more than ten seconds is the normal case
+rather than the exception:
+
+    warm round trip .......... 281 ms
+    fresh connection ......... 3528 ms   (TCP + TLS + SCRAM)
+    after 13s idle, default .. 3505 ms   <- paid again, nearly every request
+    after 13s idle, kept ..... 349 ms
+
+`db/client.ts` now uses `idleTimeoutMillis: 0`, `keepAlive: true`, `max: 20`.
+A `pool.on("error")` handler comes with it and is not optional: holding
+connections for hours guarantees some die under us, and `pg` emits `error` on
+the pool when that happens, which unhandled ends the process.
+
+**Also kept:** `connectionTimeoutMillis: 15_000`, and an overlap guard on both
+background timers in `index.ts`. The guard is hygiene rather than a fix for
+anything observed — `setInterval` does not wait for an async callback, and W9
+turned the sweep from three cheap queries into something that can run a full
+round. Your stale-claim reclaim handles the process dying; this handles the
+process being merely slow.
+
+**One gap left in `pay.ts`, deliberately not filled.** `readChallenge` is still
+an untimed loopback fetch, same shape as the settle call you bounded. I left it
+alone: it runs before any money moves, so a hang there is recoverable by
+retrying, and `connectionTimeoutMillis` now turns the pool-wedge cause you
+named in your own comment into an error rather than a hang. Worth knowing it is
+there rather than discovering it later.
+
+**Unrelated and still open, from the same debugging session.** Publishing sends
+the build twice — `ingestBuild` calls `pinDirectory(files)` and `pinFile(zip)`
+in parallel, so a 22.5MB zip pushes roughly the zip plus the whole unpacked
+tree. Measured uplink here is 0.5-0.8 Mbps, which put one publish at eight and
+a half minutes, and the parallel call wins nothing because both pins share the
+same saturated link. Both CIDs are stored and read so I have not touched it. If
+the directory pin can be derived, deferred or dropped, it halves publish time
+for anyone not on an office connection.
+
+**Needs from you:** nothing blocking.
+
+**Next:** the four agent cases still unrun, on the default hour buffer now that
+the arithmetic is documented correctly on both sides.
+
+### 2026-09-11 (2) · Frontend · Suparno
+
+**New script: `npm run account:reset`.** Wipes a test account's footprint in our
+database so the same email can run a flow again — wishlist and wants, agent and
+its decisions, reviews, comments, notifications, sessions, saves, reports, sale
+and GameKey *records*, and the two that matter most for re-testing: a studio
+membership goes back to un-accepted and the split shares that named that person
+go back to unclaimed, so `/invite/:id` is acceptable again by the same person.
+Read-only until `--yes`. No args lists every account and what it would lose.
+
+**It deliberately cannot do the thing people will reach for it for.**
+`hasEntitlement` asks the Mirror Node before it asks our tables, and the GameKey
+is minted with a supply key and no wipe key, so the server has no way to take a
+key back out of a wallet and `/download` keeps short-circuiting to `owned`
+forever. That is the product working, not a gap — a storefront that can
+confiscate what it sold is not selling ownership — so the script says so in its
+output rather than pretending. To re-buy, use a fresh address:
+`you+t1@gmail.com` is a different Privy account with a different wallet.
+
+**Two guards, both of which fired on the first real run.** It refuses to delete
+an agent that still holds money (found $1.50 on the first account I tried) and
+points at `/agent`, which refunds properly instead of orphaning it. And it
+refuses `--delete-user` for anyone who owns a studio, since
+`studios.owner_user_id` is NOT NULL and taking the studio would take its games.
+
+**Changes the contract:** nothing. One new script, one `package.json` line.
+
+**Needs from you:** a look, since it writes to the shared database. The delete
+order is children-before-parents and `pending_payouts` before `sales`; anything
+that is a fact about a game rather than about the person (a price change's
+author, a developer reply, a moderation report's reporter) is nulled rather than
+deleted.
