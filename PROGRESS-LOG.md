@@ -33,7 +33,8 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
 **Nothing is on mocks any more.** The agent has a screen; `src/mocks/agent.ts` is deleted. Comments and likes have API modules and no UI, deliberately.
 **Sales (Stage 16) and paid trials (Stage 20) are both on screen and tested as of 2026-09-08.** A sale shows a countdown on the listing and is started, extended or ended from the manage screen. A trial runs the real build by the minute, **and as of 2026-09-11 it meters itself** — the corner meter buys each next chunk automatically, from the player's own wallet over x402, and stops the moment they leave. Credit still comes off the price on purchase. **The rebuilt agent is the only surface left with no UI.**
-**Untested:** cloud saves (no build we have writes to storage), and **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run.
+**The 11 Sep testing round is written and not yet browser-tested** (2026-09-11 (5)): the trial now stops the frame when time runs out instead of covering it, "Try it" climbs checkout's own sign-in and funding ladder, a slow request can no longer make a real studio render as "not found", `isMine` is gone from the studio page, and the agent page can claim an ENS name.
+**Untested:** cloud saves (no build we have writes to storage), **the withdrawal transfer itself** — everything up to it is verified, the transfer has not been run — and everything in the paragraph above.
 **Deployed:** no. The persistent-volume requirement is gone — builds are pinned as a zip and refetched when missing, which we round-tripped for real.
 **Next:** a contract catch-up pass for Stages 17–20, then sales, then paid trials, then the agent. None of the three depend on each other.
 **Needs from you:** one bug in `game.routes.ts` and a backfill behind it — see the 2026-09-08 frontend entry. It makes `/api/me/earnings` report zero for every studio owner.
@@ -50,6 +51,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 - **Studio management** — remove/leave/promote/transfer a member, kept strictly separate from the permanent credit ledger so nobody's payout or credit is ever touched by an org-chart change.
 - **Developer replies on reviews**, delete for reviews/comments, and **reports on reviews/comments** — deliberately no auto-hide (unlike a game report), and reporters now learn the outcome either way.
 **Also real:** wallet balances including HBAR, withdrawals back out to any Hedera account or EVM address, earnings for a studio and for an individual across every studio they're on, invite emails, held payouts that settle themselves, timed play sessions.
+**The 11 Sep testing round landed on this side too** (2026-09-11 (5)): an invite link is no longer a bearer token for money, `/api/me` reports the real membership role, an agent can be named after it exists, a sale names its buyer, and a posted review comes back with its author.
 **Deployed:** no.
 **Blocked on:** no CSAM-scanning provider chosen — every upload fails closed with `MODERATION_BLOCKED` until one is. Deliberate, not a bug. Email can only reach one address until a domain is verified (see Blockers).
 **Next:** not engineering, on this side. The agent-and-payments redesign (Stages 17–20) is done; nothing further planned. Deploy is the biggest gap and nothing blocks it. Devlogs/following and curated browsing stay open on purpose.
@@ -64,7 +66,7 @@ Only things stopping work right now.
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
-| Both | Email only reaches one address | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. |
+| Both | Email only reaches one address, and what does arrive lands in spam | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. Two more things go with it and neither is code: an **SPF TXT record** on the domain at the registrar, and a real reachable HTTPS host for **`APP_URL`**, without which every link in every email points somewhere that does not answer. |
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
@@ -1832,3 +1834,135 @@ one, most from this same investigation over the last two sessions.
 check the Network tab for a `preview-sw.js` request still pending past 2s —
 that means the 2000ms itself needs raising on whatever machine hit it, not that
 this is the wrong fix.
+
+---
+
+### 2026-09-11 (5) · Backend and frontend · Priyanshu
+
+The 11 Sep testing round, worked through. Twelve of the thirteen findings are
+written; the thirteenth is DNS. Full reasoning per item lives in my private
+notes, but the contract changes and the parts of `CGS-client` I touched are
+here, because both are yours to know about.
+
+**Shipped, server:**
+
+- **An invite link is no longer a bearer token for money.** `POST
+  /api/invites/:id/accept` compares the signed-in address against the one the
+  invite was sent to and refuses a mismatch with `403
+  INVITE_EMAIL_MISMATCH`. Someone who already accepted is let through
+  regardless, so changing your account's email never locks you out of a
+  membership you hold. `GET /api/invites/:id` gained `email`, **masked** —
+  that route takes no auth, so the whole address would be readable by anyone
+  with the link. The accept response also stopped echoing the raw membership
+  row; it returns the `WireAcceptedInvite` shape it always claimed.
+- **`/api/me` reports the real membership role.** `studio.role` and every
+  entry in `studios[]` were hardcoded, so a promoted manager looked like a
+  plain member to every client and nothing they had been promoted to do was
+  reachable. Your `canManage` check was correct all along and had never been
+  fed the truth.
+- **An agent can be given a name.** `PATCH /api/me/agent` accepts `ensLabel`
+  now. It was create-only and nothing ever sent it, so in practice no agent
+  could have a name at all — all nine in the database are unnamed. Write-once
+  (`409 AGENT_ALREADY_NAMED`), a real Sepolia write, so budget ten seconds.
+  `GET /api/studios/ens-availability` answers for agents too: one flat
+  namespace, so a studio and an agent compete for the same label.
+- **A sale names its buyer.** The `sale` payload carries `buyerLabel`,
+  `buyerEns`, `buyerKind` and `buyerAccountId`; `null` means "Someone",
+  either an account we do not know or a buyer with `libraryPublic: false`. An
+  agent's purchase names **the agent**, not its owner — the key still goes to
+  the person who funded it, but the money left the agent's wallet and that is
+  who the studio hears about.
+- **`POST /api/games/:id/reviews` returns the author**, same shape as the
+  list route. Nothing to change if you already run it through the same
+  adapter.
+
+**Changes the contract:** all five above. INTEGRATION.md §11, §14 and §18 are
+updated, and the endpoint table flags each one.
+
+**Shipped, client** (I edited `CGS-client` for these, committed, not pushed):
+
+- **The trial stops when the time does.** The end-of-trial screen used to be
+  drawn *over* a still-running iframe, so the game carried on playing and
+  making noise behind a screen saying it had ended. `LightsDown` has a
+  `takeover` slot that renders through `GameStage`'s `children`, replacing
+  the frame. There is no pause API for a cross-origin build, so unmounting is
+  the only thing that actually stops one. Buying from that screen therefore
+  restarts the game, and the copy says so.
+- **"Try it" climbs the same ladder checkout does.** Checkout's sign-in and
+  funding panels came out into `components/checkout/AccountGate.tsx` with the
+  phase rule in `lib/gate.ts`; checkout renders through them unchanged and
+  the trial uses the same three. Signed out, pressing "Try it" now shows our
+  screen before Privy's modal. The funding check compares against **one
+  chunk's price**, not the game's.
+- **A slow request can no longer erase a studio.** `Studio.tsx` split its one
+  waterfall effect in two: only the studio fetch may render "No studio here",
+  and the shelf fails into an empty shelf with a note.
+- **`isMine` is gone from `Studio.tsx`.** It meant "this is the primary
+  studio on my session", so someone on two teams got "my studio" on one and
+  "theirs" on the other. Every use is now `onTeam` or `isFounder`.
+  "Leave this studio" is gated on membership, which it never was.
+- **The agent page can claim a name** (`components/agent/AgentName.tsx`),
+  deliberately there rather than in `AgentSetup` — your comment about not
+  asking for a name before the agent exists is right.
+- **Funding polls instead of re-reading once.** `/api/me` reads the balance
+  from the Mirror Node, which is a beat behind consensus, so the single
+  re-read fired the instant the faucet responded got the old number honestly
+  and it stayed on screen. `fund()` now re-reads until it changes or twelve
+  seconds pass. The funding button sits on "Adding…" a beat longer, which is
+  true.
+
+**Needs from you:** two things, both mine to unblock and neither code.
+`APP_URL` in `CGS-server/.env` needs a real reachable HTTPS host before email
+links work, and the spam problem needs an SPF TXT record at the registrar.
+Say what to point `APP_URL` at and it is a one-line change.
+
+**Not done on purpose:** the occasional empty catalog is still unreproduced,
+so nothing changed there. If you see it, grab the Network tab.
+
+**Next:** none of this has been through a browser. That pass is next, then
+whatever it turns up.
+
+---
+
+### 2026-09-11 (6) · Backend and frontend · Priyanshu
+
+Kai browser-tested the 11 Sep round from entry (5) and found two more, both
+real, both now fixed and verified against live DB rows — full detail in
+`docs/testing-round-2026-09-11.md`.
+
+**Shipped:**
+
+- **A manager's own row no longer offers to manage itself.** `GET
+  /api/studios/:idOrSlug` returns `viewerMemberId` — which row is the
+  signed-in caller's own, computed server-side so no one else's `userId`
+  leaves the route. `TeamRoster` hides "Make member/manager", "Remove" and
+  "Hand over" on that one row. "Hand over" on your own row used to try to
+  transfer the studio to no one.
+- **A game's splits could permanently misname the publisher.** Traced a
+  screenshot showing 3 credited people for a 2-person studio to the actual
+  DB row: `handle: "you"` on one split, same `userId` as the real member.
+  `Publish.tsx` seeded that row's label from `session.handle ?? 'you'` inside
+  a `useState` initializer, evaluated once — if `/publish` rendered before
+  `/api/me` had hydrated, the literal word got frozen in, with no field to
+  notice or fix it before publishing. Now derived live at every read instead
+  of trusted from state. **The one already-published game carrying "you" is
+  untouched** — splits are immutable by design, no migration or backfill ran
+  against it. Cosmetic on test data; not my call to override the rule for.
+
+**A debugging detour worth recording, not a code bug:** two `npm run dev`
+processes were both bound to port 3000 for part of this session — one
+already running from before, one I started without checking. Only one holds
+the port at a time, and it can flip across a restart, so a fix that
+typechecked, built and restarted cleanly could still be served by the
+*other*, stale process. This is very likely why an agent's name still read
+"Someone bought" in a notification after the §7 fix had already landed. Both
+duplicates are killed; one clean server is running. Added to the gotchas
+table in `CGS-server/CLAUDE.md` so it doesn't cost another detour.
+
+**Changes the contract:** `GET /api/studios/:idOrSlug` gains `viewerMemberId`
+(string or null). Documented in INTEGRATION.md.
+
+**Needs from you:** nothing new. Same two as (5) — `APP_URL` and the SPF
+record — are the only things left.
+
+**Next:** none of tonight's fixes have been pushed yet; pushing now.

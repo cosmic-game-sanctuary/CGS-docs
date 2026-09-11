@@ -83,7 +83,7 @@ POST   /api/games/:id/pay/prepare       server builds and freezes the transfer �
 POST   /api/games/:id/pay/complete      browser's signatures go back, server settles
 GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
-POST   /api/games/:id/reviews           ownership-gated
+POST   /api/games/:id/reviews           ownership-gated, returns the author too
 PATCH  /api/reviews/:id
 DELETE /api/reviews/:id                 the reviewer only — see §15
 POST   /api/reviews/:id/reply           the developer's reply — see §15
@@ -104,7 +104,7 @@ DELETE /api/games/:id/saves/:slot
 POST   /api/games/:id/sessions          call when play actually starts — see §6
 PATCH  /api/games/:id/sessions/:id      call when play ends
 POST   /api/studios
-GET    /api/studios/ens-availability    ?name=
+GET    /api/studios/ens-availability    ?name= — answers for agents too, see §18
 GET    /api/studios/:idOrSlug
 POST   /api/studios/:id/members         invite by email
 DELETE /api/studios/:id/members/:mid    remove — see §14
@@ -113,10 +113,10 @@ POST   /api/studios/:id/members/:mid/resend-invite
 POST   /api/studios/:id/leave           leave a studio you're on
 POST   /api/studios/:id/transfer        { toMemberId } — founder only
 GET    /api/invites/:id                 public — the emailed link lands here
-POST   /api/invites/:id/accept
+POST   /api/invites/:id/accept          must be the invited address — see §14
 POST   /api/me/agent                    create — see §18
 GET    /api/me/agent                    status, live balance
-PATCH  /api/me/agent                    change mode / timeout / expiry
+PATCH  /api/me/agent                    mode / timeout / expiry, and a name — see §18
 DELETE /api/me/agent                    retire, refund
 GET    /api/me/agent/decisions          audit trail, newest first
 POST   /api/me/agent/decisions/:id/respond   answer an ask-first question — see §18
@@ -283,8 +283,15 @@ GET /api/me            requireAuth
 This is `session.ts`'s real backing. `balanceUnits` is an integer in
 `balanceAsset`'s smallest units — same rule as every other price in this doc,
 divide for display, never do the arithmetic on a float. `studio` is `null`
-until this user owns one or has an **accepted** invite into one; `role` tells
-you which.
+until this user owns one or has an **accepted** invite into one.
+
+`role` is the **membership role**, and `"owner"` here means *manager* in the
+sense §14 uses: the founder, or someone promoted to it. It is the field to
+read for "can this person change the listing". Before 11 Sep it was hardcoded
+— `"owner"` for the studio you founded, `"member"` for every other — so a
+promoted manager looked like a plain member on every client and nothing they
+had been promoted to do became available. Same field, same values, now read
+off the row.
 
 ```http
 GET /api/me/library     requireAuth
@@ -466,6 +473,14 @@ one before.
 accepted members**, and only published ones to everyone else. Ownership was the
 wrong line — a collaborator credited on a game couldn't see the game they
 helped make. Member email addresses are still owner-only.
+
+**The same route gained `viewerMemberId`, as of 11 Sep.** The id of the
+signed-in caller's own row in `members`, or `null` if they are not on the
+team (or not signed in) — nobody else's `userId` is ever on this response,
+this is the one exception, and it is always the viewer's own. Use it to
+suppress manage-controls on someone's own roster row: showing "Remove" or
+"Hand over" pointed at the person looking at it is a real bug the UI had
+before this existed, not a hypothetical.
 
 ### Invites now actually send
 
@@ -733,6 +748,36 @@ Both lists now carry `authorProfile` alongside the existing `author` string:
 `author` is unchanged in shape, so nothing breaks — it just says a name now
 instead of `0x0000…0000`.
 
+**`POST /api/games/:id/reviews` returns the same shape**, as of 11 Sep. It
+used to hand back the bare inserted row, so a review posted from the page
+rendered with no author on it until something reloaded the list: the one
+review on screen definitely written by somebody was the only anonymous one.
+Nothing to change if you already run the response through the same adapter as
+the list.
+
+### Who bought it, on a `sale` notification
+
+The `sale` payload now carries the buyer, resolved on this side because only
+this side can tell an agent's wallet from a person's:
+
+```json
+{ "buyerLabel": "lottie.cgs-sanctuary.eth", "buyerEns": "lottie.cgs-sanctuary.eth",
+  "buyerKind": "agent", "buyerAccountId": "0.0.10416169" }
+```
+
+`buyerKind` is `"agent"` or `"person"`. `buyerLabel` follows the same order
+the rest of the product names people by: ENS name, then display name or
+handle. It is `null` in two cases, and both mean **"Someone"** rather than an
+error: the account belongs to nobody who ever signed in here, or the buyer has
+`libraryPublic: false` and is saying they would rather not have their buying
+watched. The payload carried no buyer at all before, so every sale read
+"Unknown bought your game" on the one storefront where the buyer is always a
+resolvable on-chain identity.
+
+**An agent's purchase names the agent, not its owner.** The GameKey still goes
+to the person who funded it — that has not changed — but the account the money
+actually left is the agent's, and that is who the studio is told about.
+
 ### Credits on a game
 
 `GET /api/games/:idOrSlug` — each entry in `splits` gains `profile`, the same
@@ -937,6 +982,25 @@ member. After transfer, `studios.owner_user_id` is the new person and their
 role is set to `owner` (manager); the old founder keeps their existing role and
 is now just a manager like anyone else — including being able to leave.
 
+### An invite link is not a bearer token
+
+`POST /api/invites/:id/accept` compares the signed-in account's email against
+the address the invite was sent to. A mismatch is `403 INVITE_EMAIL_MISMATCH`,
+with the masked address in both the message and `details.email`. Someone who
+already accepted the row is let through regardless, so changing the address on
+your account never locks you out of a membership you hold.
+
+Accepting moves real money — it backfills every split naming that row and
+releases the payouts held against it — and an emailed link gets forwarded, so
+until this check existed whoever opened the link first collected. `GET
+/api/invites/:id` now returns `email` for the screen to show, **masked**
+(`ka•••@example.com`): the route takes no auth, so the whole address would be
+readable by anyone holding the link.
+
+`POST /api/invites/:id/accept` also stops echoing the raw membership row. It
+returns `{ id, studioId, handle, role, acceptedAt }` and nothing else; `email`
+and `userId` were on it before and belong to the invitee alone.
+
 ---
 
 ## 15. Developer replies, and taking your own words back
@@ -1099,6 +1163,33 @@ destination:
 `status` moves `draft` → `funded` → `watching` on its own once money lands and
 identity anchors — nothing to poll for beyond `GET`. `DELETE /api/me/agent`
 retires it and refunds whatever's left, in one step, no separate withdrawal.
+
+### Naming an agent after it exists
+
+```
+PATCH /api/me/agent
+{ "ensLabel": "lottie" }
+```
+
+`ensLabel` was create-only, and no screen ever sent it — so in practice no
+agent could get a name at all, which matters because an agent's ENS name *is*
+its public identity: it is what a sale notification prints (§7 of the testing
+round doc), and the reason a stranger can tell one autonomous buyer from
+another. It is accepted on `PATCH` now, so it can be claimed from the agent
+page once the thing exists rather than being asked for before it does.
+
+**Write-once.** An agent that already has one answers `409
+AGENT_ALREADY_NAMED`, and there is no way to clear it: a rename would mint a
+second name and leave the first pointing at the same wallet. A retired agent
+answers `409 AGENT_ALREADY_RETIRED`. A name that is taken comes back as `422
+VALIDATION_FAILED` on `ensLabel`, and a mint that fails on chain as `502
+ENS_MINT_FAILED` with nothing written. It is a real Sepolia transaction, so
+budget ten seconds or more for the call.
+
+**Check first with `GET /api/studios/ens-availability?name=…`.** Despite the
+path it answers for the whole namespace: studio and agent subnames are minted
+into one flat subregistry, so a label is either free or it is not, and a
+studio and an agent compete for the same one.
 
 ### Wants
 
