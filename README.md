@@ -4,6 +4,8 @@ A storefront for browser-playable indie games where payment and ownership settle
 
 Built for ETHOnline 2026 on Hedera, with ENS and Privy.
 
+**[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · **[How it works](ARCHITECTURE.md)**
+
 ## Why
 
 In July 2025 itch.io and Steam deindexed adult-tagged games overnight, after Visa and Mastercard threatened to cut payment processing. LGBTQ-themed and merely suggestive titles were swept up with the rest. Switching payment processors doesn't fix it, because every processor routes back to the same two card networks underneath.
@@ -34,11 +36,25 @@ For a buyer who wants it automatic, an agent is the paid upgrade: fund a small d
 
 **A game's price history is a public topic, not a database we control.** Every change is a timestamped, checkable message. No storefront that owns its own price history can make that claim credibly, because they all control the database it lives in.
 
+## What's built
+
+Browse and wishlist with no wallet and no account. Sign in with an email, get a
+wallet, buy a game, and play it in the same tab. Try one by the minute instead,
+metered as you play, with every cent coming off the price if you buy. Publish a
+build, split the revenue with people who have only an email, and get paid the
+same minute a sale settles. Put a game on sale with a countdown anyone can
+verify. Point an agent at a price and let it buy while you sleep.
+
+Around those: verified-purchase reviews, developer replies, public profiles,
+cloud saves, earnings and withdrawals, moderation reports, and studio rosters
+with real permissions.
+
 ## Repos
 
 - [CGS-server](https://github.com/cosmic-game-sanctuary/CGS-server) — API, chain integration, agent
 - [CGS-client](https://github.com/cosmic-game-sanctuary/CGS-client) — storefront, player, upload UI
-- CGS-docs — this repo, shared status in [PROGRESS-LOG.md](PROGRESS-LOG.md)
+- CGS-docs — this repo. [ARCHITECTURE.md](ARCHITECTURE.md) is how it works,
+  [INTEGRATION.md](INTEGRATION.md) is the API contract, [PROGRESS-LOG.md](PROGRESS-LOG.md) is shared status.
 
 ## Not building
 

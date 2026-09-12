@@ -41,7 +41,7 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Stage:** All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
+**Stage:** Feature-complete on this side. All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
 - **A game can be edited after publishing** — price, description, cover, tags — and **shipped a new build**, a real version history rather than a second listing. Price changes go on the public HCS topic.
@@ -2058,3 +2058,44 @@ order is children-before-parents and `pending_payouts` before `sales`; anything
 that is a fact about a game rather than about the person (a price change's
 author, a developer reply, a moderation report's reporter) is nulled rather than
 deleted.
+
+---
+
+### 2026-09-12 · Backend · Priyanshu
+
+Write-up pass, not a code pass. The product is feature-complete on this side
+and the thing it was missing was something a judge or a sponsor could read.
+
+**New: [`ARCHITECTURE.md`](ARCHITECTURE.md).** How the whole thing actually
+works — the four flows (publishing, buying, the agent, paid trials), what
+lands on chain with the real topic and contract ids, and a section per sponsor
+on why their tech is load-bearing rather than decorative. Written against the
+code rather than from memory; every claim in it is checkable, which also means
+**if behaviour changes, it has to change there too.** `README.md` links it and
+the demo video, and gained a short list of what is actually built.
+
+**The ENS bounty gap is closed and verifiable.** `ensLabel` had existed
+server-side for weeks with nothing ever sending it, so no agent had ever been
+named. Two are now, on Sepolia, each pointing at the agent's own account
+rather than its owner's:
+
+- `suved.cgs-sanctuary.eth` → `0.0.10475095`, tx `0x186f4666…52cc1d`
+- `best-agent.cgs-sanctuary.eth` → `0.0.10475992`, tx `0x475346a3…defb9b4`
+
+Ten of eleven agents also carry an HCS-14 identity, and five studios have
+names on the same registry. That is "agents as namespaces, each with their own
+identity and permissions" as something to click rather than something to
+claim.
+
+**Real testnet activity, counted rather than estimated:** 36 settled
+purchases, 50 metered trial chunks, 24 GameKeys minted, 19 recorded agent
+decisions (13 buys, 5 passes, 1 held to the wire), 17 studios, 31 accounts.
+
+**Changes the contract:** nothing. Docs only.
+
+**Needs from you:** nothing blocking. If anything in `ARCHITECTURE.md` reads
+wrong from the frontend side, say so — I wrote the client half from reading
+your code, not from having built it.
+
+**Still open, and unchanged:** not deployed, Privy's onramp not integrated,
+and email needs an SPF record plus a real `APP_URL`.
