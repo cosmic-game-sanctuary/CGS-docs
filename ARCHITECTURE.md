@@ -1,8 +1,11 @@
 # How it works
 
-Cosmic Game Sanctuary sells browser games. The money, the ownership token, the
-revenue split and the price history all live on public infrastructure, so none
-of it depends on us staying online or staying honest.
+Three things here are unusual: an **autonomous agent** with its own wallet that
+chooses which games to buy, **revenue splits** that pay a whole team in one
+atomic transaction, and **trials metered by the minute** over x402.
+
+Everything they depend on — the money, the ownership token, the price history —
+lives on public infrastructure, so none of it needs us online or honest.
 
 📺 **[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · 📖 [The pitch](README.md) · 🔌 [API contract](INTEGRATION.md)
 

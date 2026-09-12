@@ -1,8 +1,11 @@
 # Cosmic Game Sanctuary
 
-A storefront for browser-playable indie games where the payment rail, the
-ownership record and the revenue split are public infrastructure, so no card
-network decides what can be sold and no company decides what a buyer keeps.
+**An agent that buys games for you while you sleep.** Revenue that splits
+itself atomically the second a sale lands. Games you can rent by the minute,
+metered from your own wallet.
+
+All of it on rails anyone can audit — so no card network decides what's
+sellable, and no company decides what a buyer keeps owning.
 
 📺 **[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · 📖 **[How it works](ARCHITECTURE.md)**
 
