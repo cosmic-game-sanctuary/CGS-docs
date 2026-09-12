@@ -1,13 +1,13 @@
 # Cosmic Game Sanctuary
 
-**An agent that buys games for you while you sleep.** Revenue that splits
+**An indie game store where an agent buys games for you while you sleep.** Revenue that splits
 itself atomically the second a sale lands. Games you can rent by the minute,
 metered from your own wallet.
 
 All of it on rails anyone can audit — so no card network decides what's
 sellable, and no company decides what a buyer keeps owning.
 
-📺 **[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · 📖 **[How it works](ARCHITECTURE.md)**
+📺 **[Full demo](https://youtu.be/WyJehf7Vgb4)** · 📖 **[How it works](ARCHITECTURE.md)**
 
 Built for ETHOnline 2026 on **Hedera**, with **ENS** and **Privy**. Team of two.
 
