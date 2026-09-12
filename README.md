@@ -1,61 +1,77 @@
 # Cosmic Game Sanctuary
 
-A storefront for browser-playable indie games where payment and ownership settle on a public distributed ledger, so no payment network decides what can be sold and no company decides what a buyer keeps owning.
+A storefront for browser-playable indie games where the payment rail, the
+ownership record and the revenue split are public infrastructure, so no card
+network decides what can be sold and no company decides what a buyer keeps.
 
-Built for ETHOnline 2026 on Hedera, with ENS and Privy.
+📺 **[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · 📖 **[How it works](ARCHITECTURE.md)**
 
-**[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · **[How it works](ARCHITECTURE.md)**
+Built for ETHOnline 2026 on **Hedera**, with **ENS** and **Privy**. Team of two.
+
+---
 
 ## Why
 
-In July 2025 itch.io and Steam deindexed adult-tagged games overnight, after Visa and Mastercard threatened to cut payment processing. LGBTQ-themed and merely suggestive titles were swept up with the rest. Switching payment processors doesn't fix it, because every processor routes back to the same two card networks underneath.
+In July 2025 itch.io and Steam deindexed adult-tagged games overnight, after
+Visa and Mastercard threatened to cut payment processing. LGBTQ-themed and
+merely suggestive titles were swept up with the rest. Changing payment
+processor does not help, because every processor routes back to the same two
+card networks.
 
-CGS takes the payment processor out of the loop. Payment, ownership, revenue splits and the catalog itself settle on-chain, where anyone can verify them — including software that isn't ours.
+So we took the processor out of the loop.
 
-It isn't a web3 game and it isn't GameFi. There's no token to buy, nothing to speculate on, no play-to-earn. These are ordinary indie games and the ledger is a payment rail the buyer shouldn't have to think about.
+This is not a web3 game and not GameFi. There is no token, nothing to
+speculate on, no play-to-earn. Ordinary indie games where the ledger is a
+payment rail the buyer never thinks about.
 
-## How it works
+## What works
 
-A dev uploads a build, sets a price, adds teammates by email and sets revenue splits. On publish the splits lock and the listing is written to a public consensus topic.
+**Buy and play.** Sign in with an email, get a wallet, buy a game, play it in
+the same tab about four seconds later.
 
-A buyer pays with a wallet they got by logging in with an email. Payment runs over [x402](https://x402.org) — HTTP 402, answered by a signed payment on retry — and settles through the Blocky402 facilitator. A GameKey token lands in the buyer's account and the game boots in the same tab.
+**Try before you buy.** Play by the minute, charged from your own wallet as you
+go, stopped the moment you close the tab. Every cent comes off the price if you
+buy it.
 
-Revenue reaches the whole dev team in one atomic transaction. Either everyone gets paid or nobody does, so there's no chasing a teammate for your share.
+**Ship with a team.** Split revenue with people who have only an email address.
+They get a message saying *"you are on 40% of Deadzone"*, click it, and every
+payment held for them arrives at once. The whole team is paid in one atomic
+transaction: everyone or nobody.
 
-Anyone can wishlist a game for free — no wallet needed. When a developer drops the price, everyone who saved it is notified, and the wishlist count itself is public on the same consensus topic: real demand a developer can act on, and anyone can verify, without a platform holding that data back as its own.
+**Let an agent buy for you.** Fund a small wallet, name your price, walk away.
+Two games on sale and money for one, and it waits, compares, and chooses —
+paying for its own reasoning out of its own wallet.
 
-For a buyer who wants it automatic, an agent is the paid upgrade: fund a small dedicated wallet and point it at a game. The agent watches the public listings topic through the Mirror Node, and when the price hits the trigger it buys, with no human present. Its spending cap is its balance — it can't overspend what isn't there.
+Plus the ordinary storefront: reviews from verified buyers, developer replies,
+public profiles, cloud saves, sales with a verifiable countdown, earnings and
+withdrawals, moderation, and studio rosters with real permissions.
 
-## Things that are true in the code, not just the pitch
+## What's true in the code, not just the pitch
 
-**The agent reads the public topic, not our database.** That's the difference between an app with a bot in it and a public action anyone could independently build on.
+**The agent reads a public topic, not our database.** Anyone could write a
+competing agent against the same feed and we could not stop them.
 
-**Splits can't be changed after publish.** No edit endpoint, no admin override. itch.io's issue for multi-dev payout splits has been open since 2016.
+**Splits cannot change after publish.** No edit endpoint, no admin override.
+itch.io's issue for multi-dev payout splits has been open since 2016.
 
-**Delisting doesn't revoke anyone's copy.** GameKey tokens are minted with no wipe key, no freeze key and no pause key. We're structurally unable to take a purchase back, and you can check that on HashScan rather than take our word for it.
+**Delisting does not revoke anyone's copy.** GameKey tokens are minted with no
+wipe key, no freeze key, no pause key and no admin key. We are structurally
+unable to take a purchase back, and that takes ten seconds to verify on
+HashScan.
 
-**A game's price history is a public topic, not a database we control.** Every change is a timestamped, checkable message. No storefront that owns its own price history can make that claim credibly, because they all control the database it lives in.
-
-## What's built
-
-Browse and wishlist with no wallet and no account. Sign in with an email, get a
-wallet, buy a game, and play it in the same tab. Try one by the minute instead,
-metered as you play, with every cent coming off the price if you buy. Publish a
-build, split the revenue with people who have only an email, and get paid the
-same minute a sale settles. Put a game on sale with a countdown anyone can
-verify. Point an agent at a price and let it buy while you sleep.
-
-Around those: verified-purchase reviews, developer replies, public profiles,
-cloud saves, earnings and withdrawals, moderation reports, and studio rosters
-with real permissions.
+**Price history is a public topic.** Every change is timestamped and checkable.
+No storefront that owns its own price database can say that credibly.
 
 ## Repos
 
-- [CGS-server](https://github.com/cosmic-game-sanctuary/CGS-server) — API, chain integration, agent
-- [CGS-client](https://github.com/cosmic-game-sanctuary/CGS-client) — storefront, player, upload UI
-- CGS-docs — this repo. [ARCHITECTURE.md](ARCHITECTURE.md) is how it works,
-  [INTEGRATION.md](INTEGRATION.md) is the API contract, [PROGRESS-LOG.md](PROGRESS-LOG.md) is shared status.
+| | |
+|---|---|
+| [CGS-server](https://github.com/cosmic-game-sanctuary/CGS-server) | API, chain integration, the agent |
+| [CGS-client](https://github.com/cosmic-game-sanctuary/CGS-client) | storefront, player, upload UI |
+| CGS-docs | [ARCHITECTURE.md](ARCHITECTURE.md) · [INTEGRATION.md](INTEGRATION.md) · [PROGRESS-LOG.md](PROGRESS-LOG.md) |
 
 ## Not building
 
-Resale and secondary markets, refunds, editing splits after publish, identity verification on upload, adult content, achievements, native builds. Each was cut for a reason rather than left undone.
+Resale and secondary markets, refunds, editing splits after publish, identity
+verification on upload, adult content, achievements, native builds. Each was
+cut for a reason rather than left undone.
