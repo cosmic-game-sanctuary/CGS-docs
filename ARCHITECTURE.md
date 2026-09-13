@@ -7,7 +7,7 @@ atomic transaction, and **trials metered by the minute** over x402.
 Everything they depend on — the money, the ownership token, the price history —
 lives on public infrastructure, so none of it needs us online or honest.
 
-📺 **[Four-minute demo](https://youtu.be/WyJehf7Vgb4)** · 📖 [The pitch](README.md) · 🔌 [API contract](INTEGRATION.md)
+📺 **[Full demo](https://youtu.be/WyJehf7Vgb4)** · 📖 [The pitch](README.md) · 🔌 [API contract](INTEGRATION.md)
 
 **Jump to:** [Buying](#buying-a-game) · [Publishing](#publishing) ·
 [The agent](#the-agent) · [Paid trials](#paid-trials) ·
