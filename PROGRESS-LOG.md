@@ -2099,3 +2099,54 @@ your code, not from having built it.
 
 **Still open, and unchanged:** not deployed, Privy's onramp not integrated,
 and email needs an SPF record plus a real `APP_URL`.
+
+---
+
+### 2026-09-13 · Backend · Priyanshu
+
+**ENSv2 is real now, not decorative.** On branch `ens-v2-resolver`, **not
+pushed** — review before merging.
+
+ENS feedback in Discord pushed on whether resolution was live or hard-coded.
+Checked on chain rather than reading our own code, and the answer was
+uncomfortable: the subnames were genuinely registered, but every one of them
+resolved to `0x0`, and `ensFullName()` was string concatenation. Names were
+real; what they pointed at was nothing.
+
+**Cause.** ENSv2 gives each account its *own* resolver instance. We had names
+pointed at a resolver we held no EAC roles on, so registration succeeded and
+every record write reverted.
+
+**Fixed:**
+
+- Deployed our own `PermissionedResolver` proxy through ENS's
+  `VerifiableFactory` — `0xC5fd02D29B625128c9E8755Da4Cd5F831Aba52f8`, verified
+  against ENS's official implementation by reading the ERC-1967 slot.
+- Repointed all 7 names (5 studios, 2 agents) and wrote their records. No
+  re-registration: owners and expiries untouched.
+- `GET /api/studios/ens-resolve?name=…` — public, unauthenticated, answers
+  from Sepolia every call.
+- **An agent's spending ceiling is now published on its own name and enforced
+  from there.** `cgs:maxSpend` is read back before any purchase, and anything
+  above it is refused whatever the plan or the model said.
+- Republished whenever a want's ceiling or the agent's mode changes, so the
+  number on chain cannot drift from the one being enforced.
+
+**Deliberately fail-open.** No ENS name, or Sepolia briefly unreachable, and
+the guard returns null and behaviour is exactly what it was. An ENS outage must
+never stop a Hedera purchase a buyer already authorised, and agents nobody
+named must not start behaving differently because this exists. Tested all three
+paths: named agent (chain and database agree), unnamed agent (null), and a
+price above the ceiling (refused).
+
+**Changes the contract:** one new public route, `GET
+/api/studios/ens-resolve?name=…`. Nothing existing moved.
+
+**Needs from you:** `ENS_RESOLVER` must be the new address in Render before
+any newly created studio or agent is named, or it registers against the old
+unwritable resolver again. Local `.env` and `.env.example` are already updated.
+
+**Not done, on purpose:** wildcard resolution and record aliasing. The bounty
+lists them as alternatives rather than a checklist, and both work against what
+we built — wildcard answers for subnames nobody owns, and aliasing makes names
+share one record set, which would erase the per-agent ceiling.

@@ -169,6 +169,7 @@ Testnet, all public, none of it needs our permission to read.
 | Settlement asset | USDC [`0.0.429274`](https://hashscan.io/testnet/token/0.0.429274) |
 | GameKey | one HTS NFT collection per game |
 | ENS subregistry | [`0xbD7E…6c2D`](https://sepolia.etherscan.io/address/0xbD7E9E226a6Dd9641Adb9E00d86A0E2EDbcd6c2D) on Sepolia, under `cgs-sanctuary.eth` |
+| ENS resolver | [`0xC5fd…52f8`](https://sepolia.etherscan.io/address/0xC5fd02D29B625128c9E8755Da4Cd5F831Aba52f8) — our own PermissionedResolver proxy |
 
 **The Mirror Node is the only thing we believe.** SDK receipts and
 `ScheduleInfoQuery.executedAt` can both be stale or wrong. We learned that
@@ -241,9 +242,31 @@ And because the name lives on Sepolia rather than in our database, it keeps
 resolving whether or not CGS exists. Same argument the GameKey makes about
 ownership and the topic makes about price history.
 
-**How it is built.** ENS's own `PermissionedRegistry`, our own instance of it,
-deployed through ENS's `VerifiableFactory` as a UUPS proxy we own, called
-directly with viem. The parent `cgs-sanctuary.eth` went through a real
+**An agent's name carries what it may spend.** Its spending ceiling is not a
+row in our database that you have to take our word for — it is a text record
+on its own name, and the agent reads it back before it buys:
+
+```
+best-agent.cgs-sanctuary.eth
+  addr           0x5FaEB2E6d9E25F3eBB959F7939EC5A33c6402477
+  cgs:role       agent
+  cgs:account    0.0.10475992
+  cgs:maxSpend   1
+  cgs:mode       autonomous
+```
+
+`cgs:maxSpend` is a per-purchase ceiling, and it is enforced rather than
+advertised: whatever the plan says and whatever the model returned, nothing
+above the number published on chain gets bought. The total budget was always
+public — it is the balance of the agent's own account. What was missing was
+the rule.
+
+The records are republished whenever the mandate changes, so a ceiling raised
+in the app is a ceiling raised on chain.
+
+**How it is built.** ENS's own `PermissionedRegistry` *and* its
+`PermissionedResolver`, our own instances of both, deployed through ENS's
+`VerifiableFactory` as UUPS proxies we own, called directly with viem. The parent `cgs-sanctuary.eth` went through a real
 commit–reveal registration including the full 60-second `MIN_COMMITMENT_AGE`
 wait. Permissions are ENS's Enhanced Access Control role bitmaps, copied
 verbatim from `RegistryRolesLib.sol`. No custom registrar and no custom
@@ -256,11 +279,14 @@ they compete for the same label and one availability check answers for both.
 Names are write-once — renaming would mint a second name and leave the first
 pointing at the same wallet.
 
-**Honest about the edge:** we register and display names, we do not resolve
-them in our own code paths. Nothing looks a studio up by name. The registration
-and the ownership are real; the resolution is not doing work yet. We also use
-ENS's standard resolver rather than a per-subname Permissioned Resolver, and we
-do not do wildcard resolution.
+Resolution is live: `GET /api/studios/ens-resolve?name=…` answers from Sepolia
+on every call, never from our database, and is public so verifying a name needs
+nothing from us.
+
+**Honest about the edges:** we do not use wildcard resolution or record
+aliasing. Both are alternatives to what we built rather than additions to it —
+wildcard answers for subnames that nobody owns, and aliasing makes names share
+one record set, which is the opposite of an agent having its own ceiling.
 
 ## Privy
 
