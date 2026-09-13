@@ -2150,3 +2150,44 @@ unwritable resolver again. Local `.env` and `.env.example` are already updated.
 lists them as alternatives rather than a checklist, and both work against what
 we built — wildcard answers for subnames nobody owns, and aliasing makes names
 share one record set, which would erase the per-agent ceiling.
+
+---
+
+### 2026-09-13 (later) · Backend · Priyanshu
+
+**Moved to the ENSv2 deployment ENS actually runs for ETHOnline, and made the
+agent's published ceiling one it cannot move.** Both problems were raised by
+ENS in Discord, and both were real.
+
+**Wrong deployment.** We were on the public ENSv2 Sepolia beta, whose
+addresses are the ones on the production docs. ENS runs a *separate*
+deployment for the hackathon — own registry, registrar, factory, resolver
+implementation, own app and explorer. Names on one are invisible to the other,
+so nothing migrated: the parent name, our subregistry, our resolver and all
+seven subnames were re-created there by `npm run ens:migrate -- --yes`.
+
+The resolver interface changed with it. Setters take a DNS-encoded name rather
+than a namehash, addresses are ENSIP-9 byte strings, and both `initialize`
+functions take role grants. Reads now go through `resolve(name, data)`, the
+same entry point the Universal Resolver calls, so what we read back is what
+any client resolving the name gets.
+
+**The ceiling was not binding.** Agents held `ROLE_SET_RESOLVER` on their own
+names, so the account being limited could have repointed its name at a
+resolver stating any number. Agents now get `ROLE_RENEW` only, and hold no
+role on the resolver. Studios keep `ROLE_SET_RESOLVER` — a studio owns its
+identity and nothing enforceable hangs off its records.
+
+**New addresses, already in Render and `.env.example`:**
+
+| | |
+|---|---|
+| Subregistry | `0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1` |
+| Resolver | `0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7` |
+
+**Verified on chain, not from the script's own output:** the resolver's
+ERC-1967 slot matches ENS's official implementation, both agents resolve to
+their own wallets with their mandates readable, neither can set a resolver,
+studios still can, and enforcement agrees with the database at the boundary.
+
+**Nothing in the API contract changed.** Same routes, same shapes.

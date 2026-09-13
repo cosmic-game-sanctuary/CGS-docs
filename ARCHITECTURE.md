@@ -168,8 +168,8 @@ Testnet, all public, none of it needs our permission to read.
 | Agent identities | [`0.0.10380872`](https://hashscan.io/testnet/topic/0.0.10380872) — HCS-14, each naming the human funding it |
 | Settlement asset | USDC [`0.0.429274`](https://hashscan.io/testnet/token/0.0.429274) |
 | GameKey | one HTS NFT collection per game |
-| ENS subregistry | [`0xbD7E…6c2D`](https://sepolia.etherscan.io/address/0xbD7E9E226a6Dd9641Adb9E00d86A0E2EDbcd6c2D) on Sepolia, under `cgs-sanctuary.eth` |
-| ENS resolver | [`0xC5fd…52f8`](https://sepolia.etherscan.io/address/0xC5fd02D29B625128c9E8755Da4Cd5F831Aba52f8) — our own PermissionedResolver proxy |
+| ENS subregistry | [`0xbD7E…6c2D`](https://sepolia.etherscan.io/address/0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1) on Sepolia, under `cgs-sanctuary.eth` |
+| ENS resolver | [`0xC5fd…52f8`](https://sepolia.etherscan.io/address/0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7) — our own PermissionedResolver proxy |
 
 **The Mirror Node is the only thing we believe.** SDK receipts and
 `ScheduleInfoQuery.executedAt` can both be stale or wrong. We learned that
@@ -279,13 +279,20 @@ they compete for the same label and one availability check answers for both.
 Names are write-once — renaming would mint a second name and leave the first
 pointing at the same wallet.
 
-**Verify it without us.** These names are on ENS's own Sepolia beta, so
-[explorer.ens.dev](https://explorer.ens.dev/name/best-agent.cgs-sanctuary.eth)
-and [app.ens.dev](https://app.ens.dev) read them directly — our API is not in
-that path and nothing here asks you to trust it. We do expose
-`GET /api/studios/ens-resolve?name=…`, which answers from Sepolia on every
-call rather than from our database, but it is a convenience, not the
-evidence.
+**Verify it without us.** These names live on the ENSv2 deployment ENS runs
+for ETHOnline, so ENS's own
+[explorer](https://hackathon-deployment-portal-app.ens-cf.workers.dev/best-agent.cgs-sanctuary.eth)
+reads them directly — our API is not in that path and nothing here asks you to
+trust it. We do expose `GET /api/studios/ens-resolve?name=…`, which answers
+from Sepolia on every call rather than from our database, but it is a
+convenience, not the evidence.
+
+**The ceiling is one the agent cannot move.** An agent's subname is granted
+`ROLE_RENEW` and deliberately not `ROLE_SET_RESOLVER`, so the account being
+limited cannot repoint its name at a resolver stating a different number, and
+it holds no role on the resolver either. A studio name keeps
+`ROLE_SET_RESOLVER`, because a studio owns its identity and nothing
+enforceable hangs off its records. Both facts are on each name's roles page.
 
 **Honest about the edges:** we do not use wildcard resolution or record
 aliasing. Both are alternatives to what we built rather than additions to it —
