@@ -168,8 +168,8 @@ Testnet, all public, none of it needs our permission to read.
 | Agent identities | [`0.0.10380872`](https://hashscan.io/testnet/topic/0.0.10380872) — HCS-14, each naming the human funding it |
 | Settlement asset | USDC [`0.0.429274`](https://hashscan.io/testnet/token/0.0.429274) |
 | GameKey | one HTS NFT collection per game |
-| ENS subregistry | [`0xbD7E…6c2D`](https://sepolia.etherscan.io/address/0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1) on Sepolia, under `cgs-sanctuary.eth` |
-| ENS resolver | [`0xC5fd…52f8`](https://sepolia.etherscan.io/address/0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7) — our own PermissionedResolver proxy |
+| ENS subregistry | [`0xf721…2AF1`](https://sepolia.etherscan.io/address/0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1) on the ENSv2 hackathon deployment, under `cgs-sanctuary.eth` |
+| ENS resolver | [`0xfFC6…49e7`](https://sepolia.etherscan.io/address/0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7) — our own PermissionedResolver proxy |
 
 **The Mirror Node is the only thing we believe.** SDK receipts and
 `ScheduleInfoQuery.executedAt` can both be stale or wrong. We learned that
