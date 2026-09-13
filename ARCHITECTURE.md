@@ -279,9 +279,13 @@ they compete for the same label and one availability check answers for both.
 Names are write-once — renaming would mint a second name and leave the first
 pointing at the same wallet.
 
-Resolution is live: `GET /api/studios/ens-resolve?name=…` answers from Sepolia
-on every call, never from our database, and is public so verifying a name needs
-nothing from us.
+**Verify it without us.** These names are on ENS's own Sepolia beta, so
+[explorer.ens.dev](https://explorer.ens.dev/name/best-agent.cgs-sanctuary.eth)
+and [app.ens.dev](https://app.ens.dev) read them directly — our API is not in
+that path and nothing here asks you to trust it. We do expose
+`GET /api/studios/ens-resolve?name=…`, which answers from Sepolia on every
+call rather than from our database, but it is a convenience, not the
+evidence.
 
 **Honest about the edges:** we do not use wildcard resolution or record
 aliasing. Both are alternatives to what we built rather than additions to it —
