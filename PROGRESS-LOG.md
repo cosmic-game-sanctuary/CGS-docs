@@ -2191,3 +2191,21 @@ their own wallets with their mandates readable, neither can set a resolver,
 studios still can, and enforcement agrees with the database at the boundary.
 
 **Nothing in the API contract changed.** Same routes, same shapes.
+
+---
+
+### 2026-10-02 · Backend · Priyanshu
+
+**ETHOnline is over — no placement. We're porting CGS to Arc** (Circle's EVM
+L1, USDC as gas) for the Arc Microgrants program (20 × 500 USDC, closes 14
+Oct). Full reasoning and the staged plan are in the private docs; the short
+version: GameKey becomes an ERC-721 with no admin function, splits move into
+an immutable `SplitVault` contract so the money never passes through us at
+all, and the agent's identity moves to ERC-8004. Hedera, ENS and Privy work
+stays as reference; ENS specifically is untouched and stays on Sepolia.
+
+**Stage 1 done:** publishing no longer OOM-kills Render's free instance.
+Root cause was `fetch()` + `FormData` silently materializing the whole upload
+in memory rather than streaming it — not something upgrading the instance
+would have fixed. Measured on an 85MB test build: peak RSS 601.9MB before,
+206.7MB after. No instance upgrade needed.

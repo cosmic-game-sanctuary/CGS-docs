@@ -1,5 +1,14 @@
 # How it works
 
+> **We're building for Arc now.** Everything below describes the system exactly
+> as it runs today, on Hedera — it's all checkable, nothing here is aspirational.
+> We're porting it to [Arc](https://www.arc.io/), Circle's EVM L1 where USDC is
+> the gas token, because the two guarantees this page describes — a buyer keeps
+> what they bought, a split can't change after the fact — become contract code
+> there instead of a promise backed by a key we chose not to hold. This page
+> gets rewritten for Arc once that's live; see the [README](README.md) for the
+> short version of why.
+
 Three things here are unusual: an **autonomous agent** with its own wallet that
 chooses which games to buy, **revenue splits** that pay a whole team in one
 atomic transaction, and **trials metered by the minute** over x402.

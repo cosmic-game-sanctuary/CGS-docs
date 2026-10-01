@@ -11,6 +11,14 @@ sellable, and no company decides what a buyer keeps owning.
 
 Built for ETHOnline 2026 on **Hedera**, with **ENS** and **Privy**. Team of two.
 
+> **Moving to Arc.** The version described below runs on Hedera. We are porting it
+> to [Arc](https://www.arc.io/), Circle's EVM L1 where USDC is the gas token,
+> because the two things this project promises — that a buyer keeps what they
+> bought, and that a revenue split cannot be changed after the fact — become
+> contract code there instead of policy we ask you to trust. Splits move into an
+> immutable vault that pays developers directly, so the money never passes through
+> us at all. This note will be replaced with the Arc architecture once it is live.
+
 ---
 
 ## Why
