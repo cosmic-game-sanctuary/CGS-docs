@@ -2264,6 +2264,60 @@ current ones are in `CGS-contracts/README.md`.
 
 ---
 
+### 2026-10-03 (later) · Backend · Priyanshu
+
+**Stage 6 done: the agent has a real standard identity, and Hedera is gone from
+this repo entirely.**
+
+**The headline is a bug, not a feature.** Reviewing Stage 5 I found the agent
+could not buy anything at all: the only code path that moved an agent from
+`draft` to `funded` asked the *Hedera mirror node* whether its wallet existed,
+and an Arc address never has a Hedera account. So the listener read the chain
+perfectly and had nobody to tell. It shipped unnoticed because nothing tested the
+step between "the listener reads the chain" and "the agent decides". There is now
+a test for exactly that (`npm run arc:check:agent`), and the whole life of an
+agent passes: draft with an empty wallet, funded, registers itself, buys within
+its mandate, and refuses a game above it.
+
+**The agent registers on ERC-8004** — the real registry at
+`0x8004A818BF…BD9e`, which we did not deploy. Registering mints an ERC-721, so
+the agent id is a token id you can open on the explorer, and its registration
+file is stored **on chain** rather than on IPFS, so reading it needs no gateway.
+The hand-rolled HCS-14 identifier is deleted.
+
+Its spending ceiling moved from an ENS text record on Sepolia to metadata on that
+same token on Arc, so the rule now lives on the chain the money moves on. The cap
+is also enforced where the authorization is *signed*, not only in the code that
+decides — an EIP-3009 authorization is for an exact amount, so an over-budget
+purchase is refused before a signature exists.
+
+**A second live bug, and this one affects the frontend:** patch notifications
+reached nobody. `game_keys.owner_account_id` holds an EVM address on Arc and the
+lookup asked `users.hedera_account_id`, so after Stage 4 every owner silently
+stopped getting `build_updated`. Fixed, and both address shapes are matched now.
+**Nothing on your side needs changing** — the notification simply starts arriving
+again.
+
+**No API contract changes in this stage.** Nothing in `INTEGRATION.md` moved.
+
+**Hedera is deleted:** `services/hedera/`, the Hedera env block, the three
+`HCS_*_TOPIC` vars, `X402_FACILITATOR_URL`/`NETWORK`/`PAY_TO`, two scripts and the
+`@hiero-ledger/sdk` dependency. `X402_ASSET` stays and still means what it says —
+x402 is still the protocol and USDC still the asset — but it now holds Arc's USDC
+address. **If you keep a `.env`, the old Hedera keys in it are now ignored rather
+than required.**
+
+**Migration `0027`** adds `wishlist_agents.erc8004_agent_id`, additive and
+nullable.
+
+**Blocked at the end of this session on something that is not code:** the Neon
+hostname stopped resolving from this machine's router DNS (`EAI_AGAIN`), while
+resolving fine via 8.8.8.8 and 1.1.1.1. Neon itself is up. The three suites that
+do not touch the database all pass; the database-backed ones are unrun since that
+started.
+
+---
+
 ### 2026-10-03 · Backend · Priyanshu
 
 **Stage 5 done: publishing deploys the game's own vault, and payees claim their
