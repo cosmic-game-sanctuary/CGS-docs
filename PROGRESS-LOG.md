@@ -74,6 +74,7 @@ Only things stopping work right now.
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
+| Priyanshu | The agent cannot buy on Arc yet | 2026-10-03 | Nothing from anyone else — Stage 6 of the port. The only code path that moves an agent from `draft` to `funded` asks the *Hedera* mirror node whether the agent's wallet exists, and an Arc address has no Hedera account, so no agent reaches a state the listener evaluates. The listener itself is correct and proven. **Frontend impact: the agent screens will show an agent stuck at `draft` however much it is funded**, so do not chase that as a client bug. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 | Both | Email only reaches one address, and what does arrive lands in spam | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. Two more things go with it and neither is code: an **SPF TXT record** on the domain at the registrar, and a real reachable HTTPS host for **`APP_URL`**, without which every link in every email points somewhere that does not answer. |
 
@@ -2334,6 +2335,19 @@ stay checkable. All source-verified; 51 contract tests pass.
 
 **Deleted:** `services/games/fulfil.ts` and `scripts/retry-failed-splits.ts`. The
 held-payout machinery has nothing left to do.
+
+**One thing is knowingly still broken, and it is in Blockers above.** Reviewing
+this stage I found that the agent cannot reach `funded` on Arc at all: the
+anchoring loop gates on a Hedera mirror-node lookup of the agent's wallet. So the
+listener is correct and has nobody to tell. It is the first item of Stage 6 rather
+than a Stage 5 fix, because the same loop is what anchors the agent's identity and
+replacing that is Stage 6's whole job — fixing the gate alone would mean writing
+code the next change deletes.
+
+**Also set `ARC_PLATFORM_PAYOUT`**, so the platform's 5% no longer accrues to the
+same hot key that pays gas. It is baked into each vault at publish and immutable
+after, so this only affects games published from now on, which is the correct
+behaviour rather than a limitation.
 
 ---
 
