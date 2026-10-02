@@ -2229,3 +2229,25 @@ RPC itself refuse it.
 
 Source verification on Blockscout is submitted but blocked by a rate limit on
 their public API — not a code issue, documented with retry steps.
+
+---
+
+### 2026-10-02 (evening) · Backend · Priyanshu
+
+**Stage 3 done: the Arc chain layer, and a redo of the contracts.**
+`CGS-server/src/services/arc/` (viem) now talks to the deployed contracts.
+Nothing existing calls it yet, so no behaviour changes and nothing here
+touches the database. `npm run arc:check` runs 46 checks against the live
+contracts and passes three runs in a row.
+
+Reading the app against the contracts showed the Stage 2 versions were not
+enough, so they were redeployed (contracts are immutable, so this was the last
+cheap moment): the registry now announces price changes with the sale's end
+date, build updates and relists, which the agent needs; `GameKey` can list a
+wallet's keys in one call. All three are now verified on the explorer. Stage 2's
+"verification is rate limited" was wrong: the build used a compiler the explorer
+doesn't support. All three deploy for $0.06.
+
+**Changes the contract:** none yet. Old Stage 2 testnet addresses are dead; the
+current ones are in `CGS-contracts/README.md`.
+**Next:** Stage 4, x402 settling through Circle. Hedera code stays until Stage 6.
