@@ -79,8 +79,8 @@ DELETE /api/games/:id/media/:mediaId
 GET    /api/games/:id/manage            everything the studio's own screen needs
 GET    /api/games/:id/download          x402-gated — see §4
 GET    /api/games/:id/build.zip         the build itself, ownership-checked
-POST   /api/games/:id/pay/prepare       server builds and freezes the transfer — see §4
-POST   /api/games/:id/pay/complete      browser's signatures go back, server settles
+POST   /api/games/:id/pay/prepare       server quotes the price, hands back typed data — see §4
+POST   /api/games/:id/pay/complete      browser's signature goes back, server settles
 GET    /api/games/:id/owned             authoritative ownership check
 GET    /api/games/:id/reviews
 POST   /api/games/:id/reviews           ownership-gated, returns the author too
@@ -134,7 +134,7 @@ GET    /api/me                          who you are, wallet balances, your studi
 GET    /api/me/library                  every game you actually hold a key for — see §6
 GET    /api/me/earnings                 what you've earned, across every studio — see §6.2
 GET    /api/studios/:id/earnings        what the studio made, team only — see §6.2
-POST   /api/me/withdraw/prepare         build a transfer out of the wallet — see §6.1
+POST   /api/me/withdraw/prepare         validate, then hand back the transaction to send — see §6.1
 POST   /api/me/withdraw/complete        sign it in the browser, server submits
 GET    /api/notifications
 POST   /api/notifications/:id/read
@@ -201,29 +201,57 @@ section used to say.
                 "extra": { "feePayer": "0.0.7162784" } }] }
 ```
 
-You do **not** build a Hedera transaction from this. It takes two calls:
+You do **not** build the authorization yourself. It takes two calls:
 
 ```
 POST /api/games/:id/pay/prepare    requireAuth, no body
-  -> { status: "prepared", intentId, hashes, expiresAt, amountUnits, asset }
+  -> { status: "prepared", intentId, typedData, payTo, expiresAt, amountUnits, asset }
   -> or { status: "granted", …grant }  when it's free or already owned
 
-POST /api/games/:id/pay/complete   requireAuth  { intentId, signatures }
+POST /api/games/:id/pay/complete   requireAuth  { intentId, signature }
 ```
 
-**The browser signs, not the server.** The earlier version of this doc said the
-browser can't do raw-hash signing. It can: `secp256k1_sign` is supported on
-Privy's embedded wallet provider and signs a hash with no Ethereum prefix,
-which is exactly Hedera's format. Signing server-side would have required every
+**The browser signs, not the server.** Signing server-side would require every
 buyer to delegate their wallet to the store first, which is standing permission
 to move their money and a much larger thing to ask than one game. So the server
-builds and freezes (it needs the 402 terms and a Hedera client), the browser
-signs, the server settles.
+quotes the price and builds the authorization, the browser signs it, the server
+settles it.
 
-`hashes` is a list because a frozen Hedera transaction carries one body per
-node it may go to, each needing its own signature. Send them back as
-`[{ hash, signature }]` — they're matched by hash, not position, so order can't
-corrupt a payment.
+**What gets signed is now EIP-712 typed data, not a raw hash.** `typedData` is an
+EIP-3009 `TransferWithAuthorization` — pass it **whole and unmodified** to
+`eth_signTypedData_v4`:
+
+```ts
+const signature = await provider.request({
+  method: 'eth_signTypedData_v4',
+  params: [wallet.address, JSON.stringify(prepared.typedData)],
+})
+```
+
+Do not rebuild, reorder or re-type any of it. The signature only verifies if
+every byte of the domain and message matches what the server built, so
+reassembling it client-side is just an opportunity to get it subtly wrong.
+
+This is strictly better for the person signing than the old raw hash: a wallet
+can *show* typed data, so "pay 0.30 USDC to this address" is legible where a
+32-byte hash was not. `payTo` is the game's own `SplitVault` — the money never
+passes through an account we control.
+
+**The buyer pays no network fee at all.** Circle's facilitator submits the
+transfer and covers the gas, so a wallet holding *exactly* the price of a game
+can buy that game. Verified on testnet: a buyer funded with the price and
+nothing else ended at a zero balance holding the key.
+
+**An authorization is good for 30 minutes**, not the ~2 minutes a frozen Hedera
+transaction allowed. A buyer who reads the page before signing is no longer a
+buyer whose payment expired. `PAYMENT_INTENT_EXPIRED` is still possible and
+still means nothing was charged.
+
+**Two refusals worth handling by name.** `409 ALREADY_OWNED` — that wallet holds
+the key already and nothing was charged. `202 PAYMENT_PENDING` — settlement did
+not resolve inside the wait window; it is **not** a failure and the payment may
+still land, so re-request rather than re-signing (re-signing risks a second
+charge).
 
 **`keyStatus: "pending"`** on a successful purchase is deliberate and it changes
 your UI. Payment has settled and the buyer is entitled to the game *right now* —
@@ -366,28 +394,39 @@ and freezes the transfer because that needs a Hedera client, and the browser
 signs because the key is the person's. Reuse `useWalletSigner`.
 
 ```http
-POST /api/me/withdraw/prepare    requireAuth   { to, asset?, amountUnits?, memo? }
+POST /api/me/withdraw/prepare    requireAuth   { to, amountUnits? }
 ```
-`to` is **either** a Hedera account id (`0.0.x`) **or** an EVM address —
-someone copying an address out of their own wallet has no reason to know which
-one we wanted. `asset` defaults to the settlement asset; pass `"0.0.0"` for
-HBAR. Omit `amountUnits` to send the whole balance, which is what "take my
-money out" usually means.
+`to` is an EVM address. Omit `amountUnits` to send everything the wallet can
+afford to send — a little is held back to pay for the transfer itself, reported
+as `reservedForGasUnits`.
 
 ```json
-{ "intentId": "…", "hashes": ["0x…"], "to": "0.0.512345",
-  "asset": "0.0.429274", "amountUnits": "10000000", "amountDisplay": 10.0,
-  "assetDecimals": 6, "expiresAt": "…" }
+{ "intentId": "…", "to": "0x…", "asset": "0x3600…0000",
+  "amountUnits": "10000000", "amountDisplay": 10.0, "assetDecimals": 6,
+  "reservedForGasUnits": "20000",
+  "transaction": { "to": "0x…", "value": "10000000000000000000", "chainId": 5042002 },
+  "expiresAt": "…" }
 ```
+
+**Send `transaction` yourself**, with the owner's own wallet, then report the
+hash back:
 
 ```http
-POST /api/me/withdraw/complete   requireAuth   { intentId, signatures }
+POST /api/me/withdraw/complete   requireAuth   { intentId, txHash }
 ```
-`signatures` is `[{ hash, signature }]`, exactly as `/pay/complete` takes them.
-Returns `{ status: "sent", transactionId, to, asset, amountUnits }`.
+Returns `{ status: "sent", transactionId, to, asset, amountUnits }`, confirmed
+against the chain rather than taken on your word — a hash that didn't move that
+amount to that address is refused.
 
-**The user does not need HBAR to withdraw.** The operator pays the network fee,
-because otherwise a wallet holding only USDC would be a wallet you cannot
+`value` is **wei** (18 decimals), because that is what a wallet's `value` field
+expects and USDC is Arc's native token. `amountUnits` is the 6-decimal figure to
+display. Those are the same amount written two ways; don't mix them up.
+
+**Nobody needs a second asset to withdraw.** The fee is paid in the USDC being
+withdrawn, so a wallet with money in it can always afford to move that money.
+This is why the server no longer builds or submits the transfer at all. (On
+Hedera the operator had to pay the fee, because a wallet holding only USDC would
+be a wallet you cannot
 empty. Verified on testnet: the full balance leaves and the sender's HBAR is
 untouched.
 
@@ -1315,7 +1354,7 @@ complete — pointed at a different resource:
 
 ```
 POST /api/games/:id/trial/chunks/prepare
-POST /api/games/:id/trial/chunks/complete   { "intentId": "…", "signatures": [...] }
+POST /api/games/:id/trial/chunks/complete   { "intentId": "…", "signature": "0x…" }
 ```
 
 Identical request/response shapes to `/pay/prepare` and `/pay/complete` (§4) —

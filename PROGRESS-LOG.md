@@ -2251,3 +2251,47 @@ doesn't support. All three deploy for $0.06.
 **Changes the contract:** none yet. Old Stage 2 testnet addresses are dead; the
 current ones are in `CGS-contracts/README.md`.
 **Next:** Stage 4, x402 settling through Circle. Hedera code stays until Stage 6.
+
+---
+
+### 2026-10-02 (night) · Backend · Priyanshu
+
+**Stage 4 done: every payment in the app settles on Arc through Circle, and the
+buyer pays no network fee at all.** Proven on live testnet, not inferred: a buyer
+funded with *exactly* the price of a game and zero gas signed an authorization
+and got the game. Circle's own relayer submitted the transfer and paid the
+~$0.003 of gas; the buyer's balance ended at zero. Settlement took 4.1 seconds.
+
+Four check scripts, all passing: `npm run arc:check`, `arc:check:eip3009`,
+`arc:check:x402`, `arc:check:purchase`. The last one needs the server running and
+exercises the full path including trial chunks and double-purchase refusal.
+
+**Changes the contract — the payment and withdrawal calls both changed shape.**
+See `INTEGRATION.md` §4 and §6.1; both are updated. In short:
+
+- `/pay/prepare` now returns `typedData` instead of `hashes`, and `/pay/complete`
+  takes a single `signature` instead of `signatures[]`. Sign with
+  `eth_signTypedData_v4`, passing `typedData` through **whole and unmodified**.
+  Same for `/trial/chunks/*`.
+- Withdrawals: `/withdraw/prepare` hands back a `transaction` for the browser to
+  send itself, and `/withdraw/complete` takes `{ intentId, txHash }`. On Arc the
+  fee is paid in the USDC being withdrawn, so the server has no reason to build
+  or submit it.
+- Two refusals worth handling by name: `409 ALREADY_OWNED` and
+  `202 PAYMENT_PENDING` (not a failure — re-request, never re-sign).
+
+I already updated the client for all of this — `useWalletSigner`, `purchase.ts`,
+`trials.ts`, `withdraw.ts` and the six components that call them. It typechecks
+and builds. Worth a browser pass when you're next in it.
+
+**Migration `0023` ran** on the shared database: adds `games.vault_address`,
+nullable. Additive only, so nothing breaks without it.
+
+**Needs from Kai:** a free Circle API key from console.circle.com. Settling to a
+game's `SplitVault` is impossible without one — the keyless trial authenticates
+with a signature from the key controlling `payTo`, and a vault has no key. Both
+halves are proven separately; the key closes the last gap and is a hard
+prerequisite for mainnet.
+
+**Next:** Stage 5 — publishing deploys each game's vault and records the listing
+on `GameRegistry`, and payees claim from the vault.
