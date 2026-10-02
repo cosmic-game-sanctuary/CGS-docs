@@ -2209,3 +2209,23 @@ Root cause was `fetch()` + `FormData` silently materializing the whole upload
 in memory rather than streaming it — not something upgrading the instance
 would have fixed. Measured on an 85MB test build: peak RSS 601.9MB before,
 206.7MB after. No instance upgrade needed.
+
+---
+
+### 2026-10-02 (later) · Backend · Priyanshu
+
+**Stage 2 done: the three Arc contracts, deployed and tested live.**
+`GameRegistry`, `GameKey`, `SplitVault` — 21 tests pass against Arc's own
+semantics, plus a real multi-party claim flow run on Arc Testnet that
+reconciles exactly to the wei. New repo, `CGS-contracts/` (not yet pushed).
+
+Two things only live testing caught, both already fixed: `SplitVault` needed
+a `receive()` function (a contract with neither `receive()` nor a payable
+`fallback()` refuses a bare value transfer — missed in the design, found when
+an early deploy reverted on a real send), and Arc's blocklist turned out to
+be enforced by the live network, not by the local test simulator — confirmed
+by sending real value to the known blocklisted test address and watching the
+RPC itself refuse it.
+
+Source verification on Blockscout is submitted but blocked by a rate limit on
+their public API — not a code issue, documented with retry steps.
