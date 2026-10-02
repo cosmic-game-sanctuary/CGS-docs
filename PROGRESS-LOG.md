@@ -41,14 +41,17 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Porting to Arc, stages 1–5 of 9 done (2026-10-03).** Payments, fulfilment,
-publishing and claiming all run on Arc testnet and six check scripts pass
-(`npm run arc:check*`). A buyer holding exactly a game's price and no gas can buy
-it; the money lands in that game's own `SplitVault` and payees claim from there.
-The agent reads `GameRegistry` events. **Three contract changes the frontend
-needs** are in the 2026-10-03 and 2026-10-02 (night) log entries, and the client
-is already updated for all of them. Everything below describes the Hedera build,
-which is what the parts not yet ported still do.
+**Porting to Arc, stages 1–6 of 9 done (2026-10-03).** Payments, fulfilment,
+publishing, claiming, and the wishlist agent all run on Arc testnet — eight check
+scripts pass (`npm run arc:check*`), agent purchase included, against a real
+running server. A buyer holding exactly a game's price and no gas can buy it; the
+money lands in that game's own `SplitVault` and payees claim from there; the
+agent discovers listings from `GameRegistry` events and has a real ERC-8004
+identity. **Hedera is fully deleted from this repo** — no `@hiero-ledger/sdk`, no
+Hedera env vars. **Three contract changes the frontend needs** are in the
+2026-10-03 and 2026-10-02 (night) log entries, and the client is already updated
+for all of them. Everything below describes the Hedera build, which is what the
+parts not yet ported (Stages 7–9) still do.
 
 **Stage:** Feature-complete on this side. All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
@@ -74,9 +77,10 @@ Only things stopping work right now.
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
-| Priyanshu | The agent cannot buy on Arc yet | 2026-10-03 | Nothing from anyone else — Stage 6 of the port. The only code path that moves an agent from `draft` to `funded` asks the *Hedera* mirror node whether the agent's wallet exists, and an Arc address has no Hedera account, so no agent reaches a state the listener evaluates. The listener itself is correct and proven. **Frontend impact: the agent screens will show an agent stuck at `draft` however much it is funded**, so do not chase that as a client bug. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
 | Both | Email only reaches one address, and what does arrive lands in spam | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. Two more things go with it and neither is code: an **SPF TXT record** on the domain at the registrar, and a real reachable HTTPS host for **`APP_URL`**, without which every link in every email points somewhere that does not answer. |
+
+_Cleared 2026-10-03: the agent could not buy on Arc. Fixed in Stage 6 — funding is a balance check now, not a Hedera lookup. `npm run arc:check:agent` proves the whole life of an agent against a real running server, registration through purchase through a refused over-budget game. See the log entry below._
 
 _Cleared: server-side signing on a user's Privy wallet. It was never the right question — the browser signs now, and nothing is delegated. See the 2026-09-06 (2) frontend entry._
 
@@ -2261,6 +2265,27 @@ doesn't support. All three deploy for $0.06.
 **Changes the contract:** none yet. Old Stage 2 testnet addresses are dead; the
 current ones are in `CGS-contracts/README.md`.
 **Next:** Stage 4, x402 settling through Circle. Hedera code stays until Stage 6.
+
+---
+
+### 2026-10-03 (night) · Backend · Priyanshu
+
+**Stage 6's last blocker cleared, and it wasn't Neon.** The DNS failure from
+earlier today was this machine's own router actively refusing (`EREFUSED`) that
+one hostname, while every other domain resolved fine and public DNS answered it
+correctly — Neon's project was never down. Worked around in-process with a
+custom resolver, no system files touched.
+
+With the database reachable, all **eight** `arc:check*` suites pass, including
+`arc:check:agent` against the real running server: an agent starts `draft` with
+an empty wallet, gets funded, the server's own sweep registers it on ERC-8004,
+it learns about a game from `GameRegistry`'s logs, buys it within its published
+mandate, the key lands with its buyer and not itself, and a game above the
+ceiling is refused with nothing signed. One test bug fixed along the way — the
+ceiling write is a separate transaction from the one that marks an agent funded,
+so the test now polls for it rather than reading it the same instant.
+
+Stages 1–6 are done and proven end to end against live Arc testnet.
 
 ---
 
