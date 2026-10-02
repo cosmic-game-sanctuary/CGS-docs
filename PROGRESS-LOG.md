@@ -41,6 +41,15 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
+**Porting to Arc, stages 1–5 of 9 done (2026-10-03).** Payments, fulfilment,
+publishing and claiming all run on Arc testnet and six check scripts pass
+(`npm run arc:check*`). A buyer holding exactly a game's price and no gas can buy
+it; the money lands in that game's own `SplitVault` and payees claim from there.
+The agent reads `GameRegistry` events. **Three contract changes the frontend
+needs** are in the 2026-10-03 and 2026-10-02 (night) log entries, and the client
+is already updated for all of them. Everything below describes the Hedera build,
+which is what the parts not yet ported still do.
+
 **Stage:** Feature-complete on this side. All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
 **New since Stage 9 (10–16), all tested against real infra and documented in INTEGRATION.md:**
@@ -2251,6 +2260,80 @@ doesn't support. All three deploy for $0.06.
 **Changes the contract:** none yet. Old Stage 2 testnet addresses are dead; the
 current ones are in `CGS-contracts/README.md`.
 **Next:** Stage 4, x402 settling through Circle. Hedera code stays until Stage 6.
+
+---
+
+### 2026-10-03 · Backend · Priyanshu
+
+**Stage 5 done: publishing deploys the game's own vault, and payees claim their
+share out of it.** Six check scripts pass — the four from Stage 4 plus
+`arc:check:publish` and `arc:check:listener`.
+
+The headline result: a game published with a 50/30/20 split, bought for 0.40
+USDC, and three wallets holding **nothing at all** each claimed exactly 0.19,
+0.114 and 0.076. The platform's 0.02 is left claimable and the vault's balance
+equals precisely what is still owed. Nothing stranded, and no code path exists by
+which we could alter the split.
+
+**The Circle API key arrived, so the last unproven thing is proven.** Circle
+settles to a contract `payTo`: 4.8 seconds, Circle's relayer paid the gas, the
+vault split the money on receipt. That was the riskiest assumption in the whole
+port and it is now a measurement.
+
+**Changes the contract. Three things, all updated in `INTEGRATION.md`:**
+
+- **`held` and `failed` are gone from both earnings endpoints**, replaced by
+  `claims[]` and `totals.claimable` / `totals.claimed`. They existed because the
+  server moved the money; it does not any more, so a share is either still in the
+  vault or already withdrawn. There is no state where someone is owed a transfer
+  that failed.
+- **New: `POST /api/me/claim/:gameId`**, which moves one game's share out of its
+  vault. `409 NOTHING_TO_CLAIM` when there is nothing waiting. One call per game,
+  because each game has its own vault and each claim is its own transaction.
+- **`hcsTxId` is now `chainTxHash`**, on price history and build history, with
+  `explorerUrl` beside it instead of `topicId`. Same for the `demand` endpoint,
+  which now names the registry address.
+
+I updated the client for all of it — `/money` has a claim button per game,
+`StudioEarnings` and `InviteAccept` lost the held/failed copy, and price history
+links to the explorer. Lint and build are clean. **Worth a browser pass**, since
+this is the first money-out path that is not a withdrawal.
+
+**Two things the plan had wrong, both found by building it:**
+
+1. **A payee could not claim their own earnings.** Gas on Arc is USDC, so paying
+   for a transaction means already holding USDC — and a developer whose first
+   earnings are in the vault holds nothing. `SplitVault` gained
+   `claimFor(address)`: anyone may pay the gas, the money still goes only to the
+   payee. We pay it, which buys us no say over the money and makes us no
+   gatekeeper, since it is open to anyone.
+2. **An invited collaborator used to have no address**, and a vault is immutable
+   at construction. Privy will pre-generate an embedded wallet for an email before
+   that person signs in, so they have a real address from the moment the invite is
+   written and the publish is never blocked. One consequence worth knowing:
+   accepting an invite no longer rewrites `splits.wallet` on an already-published
+   game, because the vault names an address permanently and the row would
+   otherwise claim a destination the chain disagrees with.
+
+**The agent now reads `GameRegistry` events instead of the HCS topic.** This was
+meant to be Stage 6, but listings stopped going to the topic in this stage, so
+leaving it would have broken the one rule we cannot get wrong for a whole stage.
+`arc:check:listener` proves it adversarially: a price changed on chain only is
+seen, and a price changed in the database only stays invisible.
+
+**Migrations run on the shared database:** `0024`/`0025` rename `hcs_tx_id` to
+`chain_tx_hash` on `game_builds` and `game_price_changes` — the old values were
+Hedera message ids and meaningless on Arc, so they were dropped rather than
+copied. `0026` adds `listener_state.last_block`.
+
+**Contracts redeployed.** `GameRegistry` changed (it gained a `Demand` event), so
+its address moved to `0xE7aa837c45caE001bAc6f026B23edf6e96Ee490e`. New
+`VaultFactory` at `0xc267BB087a1Bd1aAAB16c807e3f57980C78005ef`. `GameKey` did
+**not** change and is deliberately the original address, so keys already minted
+stay checkable. All source-verified; 51 contract tests pass.
+
+**Deleted:** `services/games/fulfil.ts` and `scripts/retry-failed-splits.ts`. The
+held-payout machinery has nothing left to do.
 
 ---
 

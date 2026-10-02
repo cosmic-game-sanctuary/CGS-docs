@@ -133,6 +133,7 @@ GET    /api/me/purchases                receipts, with the settlement tx id
 GET    /api/me                          who you are, wallet balances, your studio — see §6
 GET    /api/me/library                  every game you actually hold a key for — see §6
 GET    /api/me/earnings                 what you've earned, across every studio — see §6.2
+POST   /api/me/claim/:gameId            take your share out of that game's vault — see §6.2
 GET    /api/studios/:id/earnings        what the studio made, team only — see §6.2
 POST   /api/me/withdraw/prepare         validate, then hand back the transaction to send — see §6.1
 POST   /api/me/withdraw/complete        sign it in the browser, server submits
@@ -456,30 +457,60 @@ hide money from exactly the people the splits feature exists for.
 ```json
 { "totals": { "earned": {"units":12000,"display":0.012,"assetDecimals":6},
               "gross": {...}, "sales": 2, "games": 1,
-              "held": {...}, "failed": {...}, "asset": "0.0.429274" },
+              "claimable": {...}, "claimed": {...}, "asset": "0x3600…0000" },
   "games": [ { "gameId":"…", "slug":"…", "title":"…", "status":"published",
                "studio": {...}, "sales": 2, "gross": {...},
                "yours": { "pct": 60, "role": "code", "earned": {...} },
                "plays": 8, "likes": 3, "reviews": 1, "rating": 5 } ],
-  "held": [ { "gameTitle":"…", "amount": {...}, "reason":"…", "since":"…" } ],
-  "failed": [] }
+  "claims": [ { "gameId":"…", "gameTitle":"…", "gameSlug":"…",
+                "vault": "0x…", "bps": 4750,
+                "earned": {...}, "claimed": {...}, "claimable": {...} } ] }
 ```
+
+**`held` and `failed` are gone, and so is the idea behind them.** There used to be
+three states a share could be in — paid, held because the person had no account
+yet, or failed — and all three existed because the server moved the money. It does
+not any more: a sale credits the game's `SplitVault` directly and the contract
+divides it, so a share is either still in the vault (`claimable`) or already
+withdrawn (`claimed`). Nothing can get stuck, and nobody is owed a transfer that
+failed.
+
+Every figure in `claims` is read from the contract rather than from our tables, so
+it is what the chain will actually pay and `vault` is checkable on the explorer.
+`bps` is that person's share of each sale in basis points — 4750 is 47.5%.
+
+```http
+POST /api/me/claim/:gameId    requireAuth
+```
+Move your share of one game out of its vault.
+
+```json
+{ "gameId":"…", "gameTitle":"…", "vault":"0x…", "to":"0x…",
+  "amount": {"units":190000,"display":0.19,"assetDecimals":6},
+  "txHash":"0x…" }
+```
+`409 NOTHING_TO_CLAIM` when there is nothing waiting, which is an ordinary outcome
+rather than an error worth alarming anyone about. One call per game, because each
+game has its own vault and each claim is its own transaction.
+
+**We pay the gas for this, and it is necessity rather than generosity.** Gas on
+Arc is USDC, so paying for a transaction means already holding USDC — and a
+developer whose first earnings are in the vault holds nothing. `SplitVault.claimFor`
+lets anyone pay, and sends only to the payee, so paying for it buys us no say over
+the money. A developer who would rather not involve us can call `claim()` from
+their own wallet instead.
 
 ```http
 GET /api/studios/:id/earnings    requireAuth, owner or accepted member
 ```
-Same shape plus `people` — every handle on the studio's splits, what they
-earned, and whether they've claimed their invite yet. That's what lets an owner
-see *"your artist hasn't claimed theirs, 12.50 is waiting"*. Anyone outside the
-studio gets `NOT_OWNER`.
+Same shape plus `people` — every handle on the studio's splits and what they
+earned. Anyone outside the studio gets `NOT_OWNER`. `people[].claimed` is now
+always `true` and kept only so the shape does not change under you: every payee
+has a payout address from the moment they are invited, because one is generated
+for them then and the game's vault names it permanently at publish.
 
 Every money value is `{ units, display, assetDecimals }`. `units` is the truth;
 `display` is there so you don't derive it, and nothing should compute with it.
-
-**Held money settles by itself now.** A share that couldn't be paid (the person
-has no Hedera account yet) is held, and it goes out the moment that account
-first appears — triggered on `GET /api/me`, so simply opening the site is what
-releases it. You don't need a "claim" button and shouldn't build one.
 
 ### Funding a new wallet: no HBAR step
 
@@ -606,9 +637,9 @@ Two things to surface in the UI:
 - **The slug never changes**, even when the title does. Existing links keep
   working. Don't re-route after a rename.
 - The response carries **`announced`** when the price changed. `false` means the
-  new price is live here but hasn't reached the public HCS topic yet, so
-  wishlist agents can't see it. Worth showing — it's the difference between "I
-  put it on sale" and "the sale is public."
+  new price is live here but hasn't reached `GameRegistry` yet, so wishlist agents
+  can't see it. Worth showing — it's the difference between "I put it on sale" and
+  "the sale is public."
 
 `coverMediaId` picks an existing image as the cover; it does not upload one.
 Uploading is `POST /api/games/:id/media` (multipart, field `media`, up to 8).
@@ -641,7 +672,7 @@ notes. Both optional, both shown as-is.
 { "current": 2,
   "builds": [ { "version": 2, "label": "v19", "notes": "fixed the jump",
                 "buildCid": "bafy…", "buildSizeKb": 58141,
-                "hcsTxId": "0.0.x@…", "createdAt": "…" } ] }
+                "chainTxHash": "0x…", "createdAt": "…" } ] }
 ```
 
 ### Price history
@@ -657,8 +688,8 @@ notes. Both optional, both shown as-is.
       "fromUsd": 0.5,     "toUsd": 0.25,
       "asset": "0.0.429274", "assetDecimals": 6,
       "at": "2026-09-07T18:22:11.402Z",
-      "hcsTxId": "0.0.10375438@1788784716.529183364",
-      "topicId": "0.0.10380868" } ] }
+      "chainTxHash": "0x4839ffdeb7449ca81dbf1c8ed9e7073936c2c753b9cf2cac36ee8e4c7f546a59",
+      "explorerUrl": "https://explorer.testnet.arc.io/tx/0x4839ff…" } ] }
 ```
 
 Newest first. **A row describes a change, not a price** — there is no
@@ -667,11 +698,16 @@ Newest first. **A row describes a change, not a price** — there is no
 The exact same row shape appears as `priceHistory` inside
 `GET /api/games/:id/manage`, so one component can render both.
 
-`hcsTxId` is the point: **every row names the HCS message that announced it**,
-so a visitor can verify the whole history on the Mirror Node without trusting
-us. No other storefront can offer that, because they all own the database their
-price history lives in. `hcsTxId` is `null` only when an announcement failed and
-`npm run listings:retry` hasn't caught up yet.
+`chainTxHash` is the point: **every row names the transaction that recorded it on
+`GameRegistry`**, so a visitor can verify the whole history on the block explorer
+without trusting us. No other storefront can offer that, because they all own the
+database their price history lives in. `explorerUrl` is the link to render; both
+are `null` only when the recording failed and `npm run listings:retry` hasn't
+caught up yet.
+
+> **Renamed from `hcsTxId`/`topicId`.** The field used to hold an HCS message id
+> and the topic it was on. It is an Arc transaction hash now, and the companion
+> field is a URL rather than a topic id.
 
 ### Unlisting
 
@@ -892,14 +928,15 @@ notification).
 
 ```json
 { "gameId": "…", "wishlistCount": 12, "announcedMilestone": 10,
-  "topicId": "0.0.10380868" }
+  "registry": "0xE7aa837c45caE001bAc6f026B23edf6e96Ee490e",
+  "explorerUrl": "https://explorer.testnet.arc.io/address/0xE7aa83…" }
 ```
 
-Every time the count crosses a milestone (1, 5, 10, 25, 50, 100…) it is written
-to the public HCS listings topic. Wishlist counts are private platform data on
+Every time the count crosses a milestone (1, 5, 10, 25, 50, 100…) a `Demand`
+event is emitted on `GameRegistry`. Wishlist counts are private platform data on
 every other storefront — it's one of the things Steam won't give away. Here
-anyone can verify the number on the Mirror Node. That's a real differentiator
-and it currently has no UI at all.
+anyone can read the number off the chain. That's a real differentiator and it
+currently has no UI at all.
 
 The developer's own view (`GET /api/games/:id/manage`) gains
 `stats.wishlisted` — how many people are waiting, which is the number that
