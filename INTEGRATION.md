@@ -1384,6 +1384,51 @@ left as a mistake to discover mid-trial. Worth surfacing before the first
 chunk purchase: "try this for up to $0.30, stop whenever, it all comes off
 the price."
 
+### One-time setup: depositing into Gateway (added 2026-10-03, Stage 7)
+
+Chunks settle through Circle Gateway's nanopayment batching now, not the
+regular facilitator — a chunk is too small for the gas a normal settlement
+costs. Mechanically this only changes one thing for you: **a buyer must
+deposit USDC into a Gateway contract once before their first chunk**, the
+one part of this whole integration that asks for an extra signature.
+
+`GET /api/games/:id/trial`, when signed in, now also returns:
+
+```json
+{ ...,
+  "gatewayDeposit": {
+    "walletAddress": "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    "usdcAddress": "0x3600000000000000000000000000000000000000",
+    "chainId": 5042002,
+    "availableUnits": "0",
+    "availableUsd": 0,
+    "needsDeposit": true
+  }
+}
+```
+
+`null` when signed out, when the trial isn't enabled, or when there are no
+chunks left — don't prompt for a deposit in any of those cases.
+
+When `needsDeposit` is true, before offering the first chunk, have the
+buyer's wallet submit two ordinary transactions (it pays its own gas, same as
+any other write on Arc — nothing to prepare/sign/complete through us, this
+isn't an x402 payment):
+
+```solidity
+// 1. approve USDC spending
+IERC20(usdcAddress).approve(walletAddress, amount);
+// 2. deposit into Gateway
+IGatewayWallet(walletAddress).deposit(usdcAddress, amount);
+```
+
+A sensible `amount` is a few chunks' worth — $1 covers over 30 chunks at the
+`chunkPriceUnits` games tend to use. One deposit lasts across every game with
+a trial, not just this one: it's a single Gateway balance, not per-game.
+After it lands, `availableUnits` catches up within a few seconds — poll
+`GET /trial` rather than assuming it's instant, the same as any other
+read-right-after-write on this backend.
+
 ### Buying a chunk
 
 Same two-step shape as buying the game — prepare, sign in the browser,
@@ -1394,9 +1439,16 @@ POST /api/games/:id/trial/chunks/prepare
 POST /api/games/:id/trial/chunks/complete   { "intentId": "…", "signature": "0x…" }
 ```
 
-Identical request/response shapes to `/pay/prepare` and `/pay/complete` (§4) —
-if that flow is already wired up, this is the same code pointed at a
-different URL, not a new integration. `409 TRIAL_CHUNKS_EXHAUSTED` means
+Identical request/response shapes to `/pay/prepare` and `/pay/complete` (§4)
+for `prepare` — if that flow is already wired up, sign whatever `typedData`
+comes back exactly as before; it's addressed to a different contract now
+(Gateway's, not USDC's), but nothing about *how* you sign changed. **One
+thing is different in `complete`'s response:** a chunk no longer returns
+`settlementTxId` — it returns `gatewayTransferId`, a Gateway transfer id, not
+an on-chain transaction hash. Don't link it to the explorer; the money hasn't
+reached the vault yet when this responds (Circle's documented design: the
+chunk is yours immediately, the on-chain batch that moves the USDC runs
+later, on Circle's own schedule). `409 TRIAL_CHUNKS_EXHAUSTED` means
 `chunksLeft` was already 0; check `GET /trial` before offering the button.
 
 **Buy the next chunk while the current one is still running**, not after it
@@ -1504,6 +1556,13 @@ An active sale shows extend/end-early controls in place of the edit form.
 `GET /api/games/:id/trial`'s `enabled: true`, a secondary "Try for up to
 $X" button next to Buy — `worstCaseUnits` is the number to show, up front,
 so there's no meter anxiety to design around.
+
+**If `gatewayDeposit.needsDeposit` is true, that button opens a small "add
+funds to play by the minute" step first**, not the game. One amount field
+(a sensible default, a few chunks' worth), two wallet confirmations (approve,
+deposit — see §19), then straight into the trial. This is deliberately a
+one-time thing across every game with a trial, so after the first time most
+people see "Try for up to $X" go straight to the game with no interruption.
 
 **Starting a trial boots the game exactly like a real play session** — same
 isolated origin, same iframe — because that's the whole pitch (no separate

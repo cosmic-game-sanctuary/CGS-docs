@@ -41,17 +41,19 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Porting to Arc, stages 1–6 of 9 done (2026-10-03).** Payments, fulfilment,
-publishing, claiming, and the wishlist agent all run on Arc testnet — eight check
-scripts pass (`npm run arc:check*`), agent purchase included, against a real
-running server. A buyer holding exactly a game's price and no gas can buy it; the
-money lands in that game's own `SplitVault` and payees claim from there; the
-agent discovers listings from `GameRegistry` events and has a real ERC-8004
-identity. **Hedera is fully deleted from this repo** — no `@hiero-ledger/sdk`, no
-Hedera env vars. **Three contract changes the frontend needs** are in the
-2026-10-03 and 2026-10-02 (night) log entries, and the client is already updated
-for all of them. Everything below describes the Hedera build, which is what the
-parts not yet ported (Stages 7–9) still do.
+**Porting to Arc, stages 1–7 of 9 done (2026-10-03).** Payments, fulfilment,
+publishing, claiming, the wishlist agent, and paid trial chunks all run on Arc
+testnet — ten check scripts pass (`npm run arc:check*`), agent purchase and the
+contested-round decision included, against a real running server. A buyer
+holding exactly a game's price and no gas can buy it; the money lands in that
+game's own `SplitVault` and payees claim from there; the agent discovers
+listings from `GameRegistry` events and has a real ERC-8004 identity; a trial
+chunk settles through Circle Gateway's nanopayment batching — deposit once,
+every chunk after is gas-free. **Hedera is fully deleted from this repo** — no
+`@hiero-ledger/sdk`, no Hedera env vars. **Contract changes the frontend
+needs** are in the 2026-10-03 log entries, and `INTEGRATION.md` §19 has the new
+one-time Gateway deposit step. Everything below describes the Hedera build,
+which is what the parts not yet ported (Stages 8–9) still do.
 
 **Stage:** Feature-complete on this side. All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
@@ -2501,3 +2503,41 @@ prerequisite for mainnet.
 
 **Next:** Stage 5 — publishing deploys each game's vault and records the listing
 on `GameRegistry`, and payees claim from the vault.
+
+### 2026-10-03 (later again) · Backend · Priyanshu
+
+**Stage 7 done: paid trial chunks settle through Circle Gateway's nanopayment
+batching.** A chunk was too small for the regular facilitator's gas; Gateway
+solves it with a one-time deposit, then every chunk after is free. Verified
+live on testnet (`arc:check:gateway`, and `arc:check:purchase`'s extended
+trial section): one deposit, three consecutive chunks with no further gas,
+and the credit those chunks earn checked against hand-computed numbers, not
+the same formula recomputed. Gateway accepts the game's own `SplitVault` as
+`payTo`, same as Stage 4's facilitator — the one thing this stage set out to
+verify before building on it.
+
+**Found and fixed a real bug, not just a test gap.** Circle Gateway's
+`/settle` response echoes the payer's address lowercased; the regular
+facilitator doesn't. Stored as-is, a trial chunk's buyer address landed in a
+different case than that same wallet's purchase row, which would have
+silently broken credit lookups for every real buyer. Fixed at the one choke
+point every sale already passes through, so it's closed for every settlement
+rail, not just this one.
+
+**Changes the contract.** `INTEGRATION.md` §19 has the full detail:
+- `GET /api/games/:id/trial`, signed in, now also returns `gatewayDeposit` —
+  the GatewayWallet address, the buyer's current balance, and whether they
+  need to deposit before their first chunk. `null` when there's nothing to
+  prompt for.
+- A chunk's `prepare`/sign step is unchanged — keep passing `typedData`
+  through whole and unmodified, same as always. But `complete`'s response no
+  longer returns `settlementTxId` for a chunk — it returns `gatewayTransferId`
+  instead, a Gateway transfer id, not an on-chain hash. Don't link it to the
+  explorer.
+- New one-time step before a buyer's first chunk ever: deposit into Gateway.
+  Two ordinary transactions the buyer's own wallet submits (approve, then
+  deposit) — not an x402 payment, nothing to prepare/sign/complete through
+  us. §19 has the exact calls.
+
+**What's left of the 9 Arc stages:** Stage 8 (full testnet QA) and Stage 9
+(mainnet + secret rotation). Stages 1–7 are a complete, tested product.
