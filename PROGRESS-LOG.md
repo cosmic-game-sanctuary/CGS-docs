@@ -2268,6 +2268,36 @@ current ones are in `CGS-contracts/README.md`.
 
 ---
 
+### 2026-10-03 (later still) · Backend · Priyanshu
+
+**The actual pitch, proven on Arc: an agent choosing between two things it
+wants when it can't afford both, at the moment that choice matters.**
+Everything logged earlier today showed the agent *could* register and buy — it
+did not yet show it *choosing*. New script `arc:check:contested` does: two
+games go on sale at the same price and the same deadline, a buyer wants both,
+and the agent is only funded for one. 24 checks, all passing:
+
+- it does not buy the instant it can afford one — it waits
+- the server's own background loop catches the deadline within ~2.5 seconds of
+  it arriving
+- a real call to Groq produces a real explanation and a real settlement
+  transaction, checked at that transaction's own block so it can't be
+  confused with anything else the server is doing
+- it buys exactly one game, declines the other, and the key lands with the
+  **buyer** — never the agent
+
+Two bugs on the way, both in the test and not the product: funding an agent
+with *exactly* one game's price leaves nothing for the gas it pays on its own
+registration (~0.024 USDC), so it correctly found nothing affordable and
+bought nothing — not a bug, the agent refusing to spend money it didn't have.
+And a one-shot database read raced the two inserts one round writes, which a
+poll (same pattern as everywhere else this has come up) fixed.
+
+**Stages 1–6 are now fully proven**, including the part that is actually the
+submission's centre.
+
+---
+
 ### 2026-10-03 (night) · Backend · Priyanshu
 
 **Stage 6's last blocker cleared, and it wasn't Neon.** The DNS failure from
