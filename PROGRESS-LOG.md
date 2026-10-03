@@ -41,7 +41,10 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Backend · CGS-server
 
-**Porting to Arc, stages 1–7 of 9 done (2026-10-03).** Payments, fulfilment,
+**Porting to Arc, stages 1–7 done plus Stage 8's local half (2026-10-03).**
+**Frontend: your punch list is `INTEGRATION.md` §19b** — four real things to
+fix, trials being the big one (they need a new Gateway deposit step and do not
+work in the browser at all without it). Payments, fulfilment,
 publishing, claiming, the wishlist agent, and paid trial chunks all run on Arc
 testnet — ten check scripts pass (`npm run arc:check*`), agent purchase and the
 contested-round decision included, against a real running server. A buyer
@@ -2573,3 +2576,65 @@ deployed URL. Render is live but still on the pre-Arc config — nothing from
 Stages 1–7 is pushed yet. Kai chose local QA first; the push, the new Arc
 secrets in Render's dashboard, and one final pass against the real URL are
 still ahead.
+
+### 2026-10-03 (Stage 8, full contract audit) · Backend · Priyanshu
+
+**Suparno: start at `INTEGRATION.md` §19b.** It is a punch list of everything
+on your side that the Arc port left wrong, worst first, with each item marked
+*measured* (confirmed against live testnet data or a real database row) or
+*read* (found by reading code — no browser tool was available, so nothing was
+confirmed by clicking it). The short version is that the client is mostly
+already right: purchases, claims, earnings, notifications, wishlist and the
+whole agent API module are on the correct endpoints with the correct shapes,
+and it builds clean. Four things are not.
+
+**Trials are the big one, and they need new UI.** A chunk settles through
+Circle Gateway now, which needs a one-time on-chain deposit before the first
+chunk will ever succeed, and nothing in the client does it. Every chunk fails
+immediately regardless of wallet balance, because the balance Gateway checks
+is a different balance. §19 has the flow, §20 has a suggested shape. Not a
+regression — this UI never existed, because the backend half only landed in
+Stage 7.
+
+**Changes the contract:**
+
+- **`PAYMENT_PENDING` is now `409`, was `202`.** This is the one to read
+  properly (§4 has a boxed note). `202` is a 2xx, so `lib/api.ts` saw
+  `response.ok` and handed the error envelope back as the `AccessGrant` — so
+  checkout proceeded into its boot sequence with every field `undefined` on a
+  payment that may genuinely have taken the buyer's money. It is a `409` now
+  so your existing error path catches it. **Retry by calling `/pay/complete`
+  again with the same `intentId`**, never a fresh `prepare`. That retry was
+  what the docs always said to do and what the server made impossible until
+  today: `complete` consumed the intent before submitting, so there was
+  nothing left to re-request with.
+- **`/api/me/purchases` no longer returns trial chunks.** It was returning one
+  row per chunk as though each were a purchase. Measured: a real buyer with
+  four rows and one purchase, three of them Gateway chunks whose tx id
+  resolves nowhere. Trial spend lives on `GET /:id/trial` as `spentUnits`.
+- **Explorer URLs now come from the server.** `explorerUrl` on receipts,
+  claims and price-history rows; `inferenceUrl` on an agent decision;
+  `identityUrl` on an agent; `vaultUrl` on a claim. **`lib/hashscan.ts`
+  should be deleted** — it builds Hedera explorer links that cannot resolve an
+  Arc transaction.
+- **New on the agent: `erc8004AgentId` and `identityUrl`.** Its identity is an
+  ERC-8004 token it registered itself; `identityUrl` opens that token on the
+  explorer, which is worth putting on the page. `agentAccountId` and
+  `hcs14Aid` are dead and always null — `Agent.tsx` branches on the first and
+  prints "No account on Hedera yet" to every user on every agent.
+- A chunk's `complete` returns **`gatewayTransferId`, not `settlementTxId`**,
+  so `ChunkBought.settlementTxId` is always `undefined` now.
+
+**Also fixed on my side, no action for you:** a free game's key could
+terminate the server (unguarded promise; an unhandled rejection kills Node,
+verified directly), `X402_ASSET` and `USDC_ADDRESS` were two unchecked sources
+of truth for what asset the money is, and `render.yaml` declared four Hedera
+secrets and none of the Arc ones. All nine `arc:check*` suites pass after
+every change.
+
+**One correction I owe you.** I told Kai the agent screen was stale against
+the API, quoting `CGS-client/CLAUDE.md`'s "Next up" note about
+`POST /api/agents` 404ing and `mocks/agent.ts` being live. Reading the client
+showed all of that is out of date — you're correctly on `/api/me/agent`, that
+mock is deleted, `components/agent/` is real. Worth fixing that note in your
+own file so it doesn't catch anyone else.

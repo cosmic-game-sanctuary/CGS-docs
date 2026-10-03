@@ -249,10 +249,38 @@ buyer whose payment expired. `PAYMENT_INTENT_EXPIRED` is still possible and
 still means nothing was charged.
 
 **Two refusals worth handling by name.** `409 ALREADY_OWNED` — that wallet holds
-the key already and nothing was charged. `202 PAYMENT_PENDING` — settlement did
+the key already and nothing was charged. `409 PAYMENT_PENDING` — settlement did
 not resolve inside the wait window; it is **not** a failure and the payment may
-still land, so re-request rather than re-signing (re-signing risks a second
-charge).
+still land.
+
+> ### ⚠ `PAYMENT_PENDING` changed status, and the old behaviour was dangerous
+>
+> **It was `202`. It is now `409`.** Changed 2026-10-03, and worth
+> understanding rather than just patching, because the old shape broke any
+> client that did the obvious thing.
+>
+> `202` is a 2xx. A client that checks `response.ok` — ours did — saw success,
+> took the `{ error: … }` envelope as the `AccessGrant` payload, and carried on
+> into the boot sequence with every field `undefined`, while the buyer's money
+> may genuinely have been taken. A silent fake success is the worst possible
+> answer to "did my payment work", so the status code now says no to every
+> client, including ones that have never heard of this code.
+>
+> **Retrying is now actually possible, which it previously was not.** The
+> advice here used to be "re-request rather than re-signing" — correct advice
+> that the server made impossible: `/pay/complete` consumed the payment intent
+> before submitting, so once a pending answer came back there was nothing left
+> to re-request with, and a buyer's only route forward was the re-sign this
+> paragraph warns against. The intent now survives a pending outcome.
+>
+> **So: on `409 PAYMENT_PENDING`, call `/pay/complete` again with the same
+> `intentId`.** Not a new `prepare`, not a new signature. That resubmits the
+> identical authorization under the identical idempotency key, so Circle
+> converges on the one payment and the token's own nonce makes a second
+> transfer impossible. Back off a second or two between tries and give up after
+> a handful; the authorization is valid for 30 minutes, so there is no rush.
+> **Never call `prepare` again in response to this** — a fresh signature is a
+> genuinely new payment and is the one way to get charged twice.
 
 **`keyStatus: "pending"`** on a successful purchase is deliberate and it changes
 your UI. Payment has settled and the buyer is entitled to the game *right now* —
@@ -807,8 +835,32 @@ real one on first visit — `displayName === null` is a reasonable trigger for a
 ### Receipts
 
 `GET /api/me/purchases` — newest first, one row per purchase, each with
-`settlementTxId` (look it up on the Mirror Node), the price paid at the time,
-the game, and the `key` (`tokenId`, `serial`) it minted.
+`settlementTxId`, a ready-made `explorerUrl` for it, the price paid at the
+time, the game, and the `key` (`tokenId`, `serial`) it minted.
+
+**Two changes here, 2026-10-03.**
+
+**`explorerUrl` is new, and you should use it instead of building a link.**
+Which explorer resolves a transaction is a fact about the network the server
+is pointed at, and the server is the only side that knows it. `lib/hashscan.ts`
+in the client builds `hashscan.io` URLs, which is a Hedera explorer: it cannot
+resolve an Arc transaction at all, and the id-mangling it does on the way
+(`@`→`-`) is for a Hedera id format Arc does not use. **That file should go**,
+and every place it is used should read a server-sent URL. The same field now
+exists on the agent's decisions (`inferenceUrl`), on a claim (`explorerUrl`,
+`vaultUrl`), and on a price-history row (`explorerUrl`, already there).
+
+**Trial chunks no longer appear in this list, and they used to.** A chunk is
+also a `sales` row against the same buyer and nothing filtered them out, so
+the receipts screen listed one row per chunk as though each were a purchase of
+a game the buyer may not own. Measured on a real test buyer: four rows, one
+actual purchase. Stage 7 made it worse — a Gateway-settled chunk's
+`settlementTxId` is a transfer id that resolves nowhere on an explorer, so
+three of those four rows would have rendered a receipt with a dead link.
+**What a buyer spent trialling is reported by `GET /api/games/:id/trial` as
+`spentUnits`/`creditUnits`**, which is the honest place for it: it is credit
+toward a purchase, not a purchase. Nothing to change on your side unless you
+were counting on chunks being in here.
 
 ### Authors on reviews and comments
 
@@ -1232,13 +1284,44 @@ destination:
 `GET /api/me/agent` once funded:
 
 ```json
-{ "id": "…", "status": "watching", "balanceUnits": 500000, "balanceUsd": 0.5,
-  "mode": "autonomous", "expiresAt": "…", "ensLabel": "kai-agent" }
+{ "id": "…", "status": "watching", "balanceUnits": "500000", "balanceUsd": 0.5,
+  "mode": "autonomous", "expiresAt": "…", "ensLabel": "kai-agent",
+  "erc8004AgentId": "896985",
+  "identityUrl": "https://explorer.testnet.arc.io/token/0x8004…BD9e/instance/896985",
+  "agentAccountId": null, "hcs14Aid": null }
 ```
 
 `status` moves `draft` → `funded` → `watching` on its own once money lands and
 identity anchors — nothing to poll for beyond `GET`. `DELETE /api/me/agent`
 retires it and refunds whatever's left, in one step, no separate withdrawal.
+
+> ### ⚠ The agent's identity moved to ERC-8004, and the screen still says Hedera
+>
+> **New fields, 2026-10-03: `erc8004AgentId` and `identityUrl`.** The agent
+> registers itself on Arc's predeployed ERC-8004 `IdentityRegistry` — the
+> `agentId` *is* an ERC-721 token id it owns — and `identityUrl` opens that
+> token on the explorer. That link is worth putting on the page: it is what
+> turns "this agent has an identity" from something we assert into something a
+> stranger can check, the same argument the split bar makes about money.
+>
+> Both are `null` until the agent is **funded**, and that is correct rather
+> than missing: registration is a transaction the agent pays for itself, so an
+> empty wallet cannot have an identity yet. At `draft`, render "not registered
+> yet".
+>
+> **`agentAccountId` and `hcs14Aid` are dead.** They are the Hedera-era
+> identity, they are always `null` on Arc, and they are kept in the response
+> only so a client written against the old shape keeps parsing. `Agent.tsx`
+> currently branches on `agentAccountId` and prints, to every user, on every
+> agent, forever: **"No account on Hedera yet. The first money in makes one."**
+> That string is wrong in all three of its claims now. Replace that whole
+> branch with `erc8004AgentId` / `identityUrl`.
+
+**Decisions carry `inferenceUrl` too.** `GET /api/me/agent/decisions` rows now
+include it alongside `inferenceTxId` — the explorer link for the x402 payment
+the agent made for its own reasoning on a contested round. `DecisionFeed.tsx`
+builds this link with `hashscanTx()` today, which points at a Hedera explorer
+and cannot resolve it. Read the server's field instead.
 
 ### Naming an agent after it exists
 
@@ -1474,6 +1557,124 @@ asking and reduces what it charges by whatever credit you've earned on that
 game — pay the difference, or nothing at all if chunks already covered it.
 The response shape is identical either way; there's no "trial purchase"
 variant to branch on.
+
+---
+
+## 19b. Frontend punch list after the Arc port — 2026-10-03
+
+A full route-by-route and shape-by-shape audit of both repos, done at the end
+of Stage 8. **The client builds clean and most of it is already correct** —
+purchases, claims, earnings, notifications, wishlist and the whole agent API
+module are wired to the right endpoints with the right shapes. What follows is
+everything that is not, worst first.
+
+Two things to know about how this list was produced, so you know what to
+trust. Everything marked **measured** was confirmed against live testnet data
+or a real database row. Everything marked **read** was found by reading the
+code: there was no browser-automation tool available in that session, so
+nothing below was confirmed by clicking it. Where a claim is about what a user
+sees on screen, treat it as a strong inference and worth 60 seconds in a
+browser before you start.
+
+### 1. Trials are completely broken, and need new UI — **read**
+
+`GET /api/games/:id/trial` → `gatewayDeposit` is the new field; §19 has the
+full flow. A chunk now settles through Circle Gateway, which needs a one-time
+on-chain deposit before the *first* chunk will ever succeed, and nothing in the
+client does that deposit — grepping the repo for `gateway` or `deposit` finds
+nothing related. So every chunk fails immediately with an
+insufficient-funds-shaped error, no matter the wallet balance, because the
+balance Gateway checks is a different balance.
+
+Not a regression: this UI never existed, because the backend half of it only
+landed in Stage 7. It is the one part of the entire Arc port that *adds* a step
+for a user, so it is worth designing rather than bolting on — §19 and §20's
+"Paid trials" both cover the shape.
+
+Also: a chunk's `complete` response returns **`gatewayTransferId`, not
+`settlementTxId`**. `api/trials.ts` still declares `settlementTxId: string` in
+`ChunkBought`, so that field is now always `undefined`. Don't link it to an
+explorer; the money has not reached the vault when the call returns.
+
+### 2. `lib/hashscan.ts` should be deleted — **measured**
+
+It builds `hashscan.io` URLs. That is a Hedera explorer and cannot resolve an
+Arc transaction. Used in one place today (`DecisionFeed.tsx`, for the agent's
+inference payment). The server now sends a ready-made URL everywhere it
+returns a transaction id: `explorerUrl` on a receipt, on a claim, on a
+price-history row; `inferenceUrl` on a decision; `identityUrl` on an agent;
+`vaultUrl` on a claim. Read those instead — which explorer is correct is a
+fact about the network the server is pointed at, and only it knows.
+
+Verified live: `https://explorer.testnet.arc.io/token/…/instance/896985`
+resolves, and the inference transaction it names reports `success` through
+Blockscout's own API.
+
+### 3. `Agent.tsx` tells every user the wrong thing — **read**
+
+```
+'No account on Hedera yet. The first money in makes one.'
+```
+
+Printed on every agent, forever, because it branches on `agentAccountId`,
+which is always `null` on Arc. Use `erc8004AgentId` and `identityUrl` — see the
+boxed note in §18. Both are `null` until the agent is *funded*, which is
+correct and is the state to render as "not registered yet".
+
+### 4. `PAYMENT_PENDING` is now `409`, not `202` — **measured**
+
+See the boxed warning in §4. The short version: the old `202` meant
+`response.ok` was true, so `lib/api.ts` returned the error envelope as an
+`AccessGrant` and checkout proceeded with undefined fields on a payment that
+may have taken the buyer's money. It is a `409` now, so your existing error
+path catches it. **Retry by calling `/pay/complete` again with the same
+`intentId`** — never `prepare` again.
+
+### 5. `ApiErrorCode` is missing codes the client branches on — **measured**
+
+The type is `ApiErrorCode | string`, so unknown codes work at runtime; this is
+about autocomplete and about knowing the code exists. Emitted by the server and
+absent from the union, the ones that actually matter:
+
+`ALREADY_OWNED` · `PAYMENT_PENDING` · `NOTHING_TO_CLAIM` · `NO_AGENT` ·
+`CHAIN_NOT_CONFIGURED` (503, a server misconfiguration rather than anything a
+user did) · `ABOVE_MANDATE` · `ALREADY_RESOLVED` · `AGENT_EXISTS` ·
+`AGENT_ALREADY_RETIRED` · `NOT_ASKABLE` · `HANDLE_TAKEN` · `STUDIO_EXISTS` ·
+`WITHDRAW_FAILED` · `UPLOAD_REJECTED` · `MODEL_UNAVAILABLE`
+
+And declared in the union but never emitted any more:
+`PAYMENT_SIGNATURE_INVALID`, plus the `payout_held` / `payout_settled` family
+of notification types — there is no held-payout state on Arc, so nothing can
+raise them.
+
+### 6. Dead Hedera code that degrades safely — **measured**, low priority
+
+None of this breaks anything today. Worth a cleanup pass, not an urgent one.
+
+- `WithdrawPanel.tsx` has an HBAR asset toggle. `/api/me` no longer returns
+  `hbar`, so `session.hbar` is always `0` and the toggle is gated on
+  `> 0` — permanently invisible. The whole `HBAR` / `HBAR_DECIMALS` /
+  `isHbar` branch is dead. Its address hint still reads "A Hedera account id,
+  or a wallet address."
+- `api/me.ts` declares `hederaAccountId`, `hbarUnits`, `hbar`; the server
+  sends none of them. They land as `undefined` and fall back cleanly.
+- `ProfileMenu.tsx` passes `session.hederaAccountId` (always null) and has a
+  comment about "the first top-up also creates the Hedera account".
+- `SalePanel.tsx` prints `Announced as {promotion.hcsStartTxId}`. The field
+  name is stale but **the data is correct** — it holds an Arc transaction hash
+  now. Worth renaming eventually; worth linking with an explorer URL sooner.
+- `api/profiles.ts` has `hcsSaleTxId` (always null now) and a comment telling
+  you to look `settlementTxId` up on the Mirror Node.
+
+### 7. Not a bug, but the notes that sent me looking — **measured**
+
+`CGS-client/CLAUDE.md`'s "Next up" section still says `POST /api/agents` and
+`GET /api/agents/:id` are 404 and that `src/mocks/agent.ts` and `AgentPanel`
+point at nothing. **All three statements are out of date**: the agent module
+is correctly on `/api/me/agent`, `src/mocks/agent.ts` is deleted, and there is
+a real `components/agent/` directory. I repeated that stale claim to Kai
+before checking the code, so it is worth fixing in that file before it
+misleads anyone else.
 
 ---
 
