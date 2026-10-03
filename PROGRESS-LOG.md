@@ -2541,3 +2541,35 @@ rail, not just this one.
 
 **What's left of the 9 Arc stages:** Stage 8 (full testnet QA) and Stage 9
 (mainnet + secret rotation). Stages 1–7 are a complete, tested product.
+
+### 2026-10-03 (Stage 8, local half) · Backend · Priyanshu
+
+**Full QA pass against local testnet, re-confirming publish, delist, relist,
+claim, and the agent, and fixing two real bugs along the way.** `TESTING.md`
+is rewritten for Arc end to end. Gas costs re-measured, matched
+`arc-port.md` §3 exactly (publish $0.0172, mint $0.0044, claim $0.00275) —
+no drift since that table was written.
+
+**Two bugs fixed, same root cause as an earlier one.** `game_keys.owner_account_id`
+is an EVM address on Arc, a `0.0.x` on Hedera. Two places still matched the
+Hedera shape only: a public profile's library read **empty for every
+Arc-era owner**, and a wishlist price-drop notification never excluded
+someone who already owned the game. Both fixed; verified the library one
+directly against a real row.
+
+**Frontend-facing, and worth knowing before anyone tries a trial in the
+browser: paid trials will not work right now.** Checked by reading
+`CGS-client`'s code — no browser tool was available this session to confirm
+by clicking, so treat this as a strong inference, not a run test.
+`src/api/trials.ts` and the trial session component call `prepare`/`complete`
+directly with no Gateway deposit step anywhere; grepping the repo for
+"gateway" or "deposit" finds nothing related. Every chunk will fail
+immediately once Stage 7 is what's running — not a regression, the deposit
+UI never existed before Stage 7 added the backend half of it.
+**`INTEGRATION.md` §19 and §20 have the exact calls and a suggested shape.**
+
+**Not done, by choice.** The literal Stage 8 acceptance test needs a real
+deployed URL. Render is live but still on the pre-Arc config — nothing from
+Stages 1–7 is pushed yet. Kai chose local QA first; the push, the new Arc
+secrets in Render's dashboard, and one final pass against the real URL are
+still ahead.
