@@ -29,6 +29,15 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
+**Ported to Arc, 2026-10-04.** `INTEGRATION.md` §19b is **done, all six
+items**, and none of it is browser-tested: every chain write 503s here until
+`ARC_OPERATOR_KEY` and `CIRCLE_API_KEY` are in my `.env` (see Blockers, and the
+2026-10-04 frontend entry). Trials gained the Gateway deposit rung they could
+not work without, `PAYMENT_PENDING` is retried by re-completing the same intent
+rather than re-preparing it, `lib/hashscan.ts` is deleted in favour of the URLs
+you send, `/agent` reads `erc8004AgentId`, and the HBAR path is gone. Everything
+below this paragraph describes the Hedera build.
+
 **Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
 **Nothing is on mocks any more.** The agent has a screen; `src/mocks/agent.ts` is deleted. Comments and likes have API modules and no UI, deliberately.
@@ -83,6 +92,7 @@ Only things stopping work right now.
 |---|---|---|---|
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$10 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to `0.0.10375438`. It funds every test wallet **and** pays every split, so checkout testing drains it from both ends. |
+| Suparno | Every chain write 503s locally: no `ARC_OPERATOR_KEY`, no `CIRCLE_API_KEY` | 2026-10-04 | Both from Priyanshu. The operator key **must be the one that deployed CGS-contracts** (`GameKey`'s minter and `GameRegistry`'s operator are immutable), so it cannot be generated locally. Reads, the catalog and the agent's event watching all work without them; publish, buy, claim, faucet and agent purchases do not. |
 | Both | Email only reaches one address, and what does arrive lands in spam | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. Two more things go with it and neither is code: an **SPF TXT record** on the domain at the registrar, and a real reachable HTTPS host for **`APP_URL`**, without which every link in every email points somewhere that does not answer. |
 
 _Cleared 2026-10-03: the agent could not buy on Arc. Fixed in Stage 6 — funding is a balance check now, not a Hedera lookup. `npm run arc:check:agent` proves the whole life of an agent against a real running server, registration through purchase through a refused over-budget game. See the log entry below._
@@ -2638,3 +2648,76 @@ the API, quoting `CGS-client/CLAUDE.md`'s "Next up" note about
 showed all of that is out of date — you're correctly on `/api/me/agent`, that
 mock is deleted, `components/agent/` is real. Worth fixing that note in your
 own file so it doesn't catch anyone else.
+
+### 2026-10-04 · Frontend · Suparno
+
+**Shipped:** all six items of `INTEGRATION.md` §19b, your Arc punch list. The
+audit was accurate on every count, including the two you marked **read** rather
+than measured. Nothing is browser-tested yet, for the reason in Needs from you.
+
+- **Trials.** New `deposit` rung on the trial ladder, in `TrialSession`'s
+  `TrialGate` with a `DepositBody` panel beside the sign-in and funding ones.
+  Two ordinary wallet transactions, sequential, because the deposit pulls USDC
+  through an approval that has to land first. **`waitForDeposit` polls
+  `GET /trial` after the receipt** rather than trusting it, per your note that
+  `availableUnits` catches up a few seconds later. `ChunkBought.settlementTxId`
+  is now `gatewayTransferId` and is not linked anywhere.
+- **The deposit amount is the trial's `worstCase`, minus what is already in,
+  capped at the wallet balance** — not the flat $1 §19 suggests. Worst case is
+  the most a trial can ever cost and you cap it at the game's price, so this
+  guarantees the meter cannot run dry mid-game. The wallet cap is because the
+  funding rung only guarantees one chunk's price, so asking for the whole worst
+  case could strand a buyer on a rung they cannot clear.
+- **`PAYMENT_PENDING`.** `409` is caught now, and retried by re-completing the
+  same intent with the same signature, never re-preparing. Capped at five tries,
+  two seconds apart. Thanks for making the intent survive a pending outcome:
+  without that there was genuinely no safe move.
+- **`lib/hashscan.ts` deleted.** Everything reads your URLs now:
+  `explorerUrl` on receipts and claims, `inferenceUrl` on decisions,
+  `identityUrl` on an agent, `explorerUrl` on price history. Three of those were
+  being dropped on the floor rather than merely built wrong, so a receipt's
+  settlement and a vault claim are clickable for the first time.
+- **`/agent`** reads `erc8004AgentId` / `identityUrl`. It was telling every user
+  "No account on Hedera yet" forever.
+- **HBAR removed**, and the two dead `/api/me` fields with it. Deleting
+  `session.hbar` and `session.hederaAccountId` is what found the rest: an asset
+  toggle, a second decimals path, `formatAsset`, a "Hedera account id" hint on
+  the withdraw field, and a caption on `/money`.
+- **`ApiErrorCode`:** your fifteen added, `PAYMENT_SIGNATURE_INVALID` dropped.
+
+**Changes the contract:** nothing on your side. Two things I want to flag, both
+yours to decide:
+
+1. **`GatewayWallet` exposes `depositWithPermit` and
+   `depositWithAuthorization`.** I confirmed both on the verified implementation
+   behind the proxy (`0xa33d…6e28`). Either would collapse the deposit rung into
+   **one gasless signature** and delete the only step the Arc port adds for a
+   person. Both need a submitter, so they are the server's to drive. Worth it if
+   you have the time, and I would rather you did it than I faked it from here.
+2. **A sale has no explorer URL.** `promotion.hcsStartTxId` holds a live Arc
+   hash under a Hedera-era name, and it is the one transaction id you return
+   without a URL beside it. I truncated it and deliberately did **not** build a
+   link, since the whole point of §19b item 2 is that this side must not decide
+   which explorer is correct. An `explorerUrl` on the promotion payload would
+   finish it.
+
+**Needs from you:** **two secrets, and one of them only you can produce.**
+My `.env` had no Arc block at all and `X402_ASSET` still held the Hedera token
+id, which `assertAssetAgrees` correctly refused to boot on. I filled in
+everything public from `CGS-contracts/README.md` and left these two:
+
+- **`ARC_OPERATOR_KEY`** — and it has to be **the key that deployed the
+  contracts**, since `GameKey`'s minter and `GameRegistry`'s operator are
+  immutable and fixed to the deploying address. A fresh key is not a
+  substitute, so I cannot generate my way out of this one.
+- **`CIRCLE_API_KEY`** — free, but without it settling to a vault is refused.
+
+Without them the server boots fine and reads work (`/health` reports
+`chainReachable: true`, the agent resumes `GameRegistry` from block 65344651),
+and **every write 503s** — so publish, buy, claim, the faucet and the agent's
+purchases are all untestable here. That is the only thing between this and a
+browser pass.
+
+**Next:** testing all of the above the moment those two land, starting with the
+deposit rung and a trial chunk, then the four agent cases still unrun (second
+wire, plain price cut, ask-first, wind-down).
