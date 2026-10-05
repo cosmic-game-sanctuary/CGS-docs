@@ -29,14 +29,14 @@ _Whoever moves a half updates it, regardless of whose it usually is._
 
 ### Frontend · CGS-client
 
-**Ported to Arc, 2026-10-04.** `INTEGRATION.md` §19b is **done, all six
-items**, and none of it is browser-tested: every chain write 503s here until
-`ARC_OPERATOR_KEY` and `CIRCLE_API_KEY` are in my `.env` (see Blockers, and the
-2026-10-04 frontend entry). Trials gained the Gateway deposit rung they could
-not work without, `PAYMENT_PENDING` is retried by re-completing the same intent
-rather than re-preparing it, `lib/hashscan.ts` is deleted in favour of the URLs
-you send, `/agent` reads `erc8004AgentId`, and the HBAR path is gone. Everything
-below this paragraph describes the Hedera build.
+**On Arc, and partly browser-tested as of 2026-10-05.** `INTEGRATION.md` §19b
+is done. A trial with its Gateway deposit, two metered chunks, and buying the
+game with the trial credited all worked in a browser — after four fixes the
+check scripts could not have found, because they sign with a raw key (see the
+2026-10-05 frontend entry; **one of them affects your withdraw code**).
+**Still to click through:** publishing a real build, a withdrawal, agent
+funding, and opening a trial signed out. Everything below this paragraph
+describes the Hedera build.
 
 **Stage:** eight workflows plus the catch-up pass. W7 (invites and held payouts) and W11 (earnings and withdrawal) landed 2026-09-08 and were tested against the live API in a browser, not assumed.
 **Real, not mocked, now:** the whole buyer path and the whole dev path, plus **reviews, reports, wishlists, profiles, receipts, managing a published game, studio roster management, invites, held payouts and earnings**. A collaborator invited by email can claim their share, and the money held while they hadn't lands without either side doing anything. `/money` is a new page: what you earned across every team, what is still owed, and a withdrawal signed in the tab.
@@ -2720,3 +2720,103 @@ browser pass.
 **Next:** testing all of the above the moment those two land, starting with the
 deposit rung and a trial chunk, then the four agent cases still unrun (second
 wire, plain price cut, ask-first, wind-down).
+
+### 2026-10-05 · Backend · Suparno
+
+Three server changes, all measured before written, plus a check of your
+`445a7b8`.
+
+**Shipped:**
+
+- **`net.setDefaultAutoSelectFamily(false)` in `db/client.ts` (`0a51ac0`).**
+  Node 22 races a host's IPv6 and IPv4 addresses on every connection. Neon
+  publishes three of each, and on a machine with blackholed IPv6 the race
+  fails outright: measured in one process, default **FAILED after 20s**, race
+  off **OK in 2.5s**, while a raw IPv4 socket connected in ~270ms every time and
+  raw IPv6 timed out every time. That was every `Connection terminated
+  unexpectedly`, every `dbReachable: false`, and two check scripts failing on
+  their first query. Set in the module rather than a start script so
+  `scripts/` gets it too. Harmless where IPv6 works.
+- **`server.requestTimeout` raised to 20 minutes in `index.ts` (`1ffb375`).**
+  Node's default is 300s to *receive* a whole request, and `app.listen` kept
+  it. A 22.5MB build needs ~0.6 Mbps sustained to fit, and Node closes the
+  socket before Express or multer runs, so nothing here could log it. Honest
+  about the evidence: not what broke the upload that started this (that one
+  completed). It is the wall behind that one.
+- **`GET /api/me/gateway` (`7a68dd4`).** What a person has in Circle Gateway,
+  i.e. the unplayed rest of a trial deposit. Their money, not in their wallet,
+  and shown nowhere before this. A separate route because it is a call to
+  Circle and `/api/me` runs on every page. Bounded at 8s; a failure is a 503
+  rather than a zero, because "could not ask" is not "nothing there".
+  `gatewayAvailableUnits` gained an optional `signal`; your trial route passes
+  none and behaves exactly as before.
+
+**Checked, and it holds:** your streaming fix. Re-ran
+`bench-publish-memory` on the real 22.5MB Deadzone build (58MB unpacked) under
+`--max-old-space-size=400`: **143MB peak RSS**, completed. Without it that
+build is buffered in memory, on a machine with almost none spare.
+
+**Changes the contract:**
+
+```
+GET /api/me/gateway        requireAuth
+  -> { availableUnits: "240000", availableUsd: 0.24,
+       asset: "0x3600…0000", assetDecimals: 6 }
+  -> 503 GATEWAY_UNAVAILABLE  when Circle could not be asked
+```
+
+Could you fold that into `INTEGRATION.md` §19? That file is read-only from our
+side.
+
+**In the shared database now, so you are not surprised by them:**
+
+- `uploadtest-game-3adbbe05`, **published**. I made it to close a gap:
+  `arc:check:publish` uses fake CIDs and never calls `ingestBuild`, so a real
+  build and a real publish had never run together. All of it passed. Remove
+  with `npm run game:delist` whenever.
+- `deadzone-m4mu`, a **draft**. Suparno's upload that "failed": the server
+  finished it, pins and build included, and the browser had already given up.
+  Left alone; it is his to delete or finish.
+
+**Needs from you:** the §19 note above. Nothing blocking.
+
+### 2026-10-05 · Frontend · Suparno
+
+**Shipped:** the first browser pass on Arc, and four bugs it found that no
+script could, because every script signs with a raw key and never goes
+through Privy.
+
+- **⚠ The embedded wallet sent on Ethereum mainnet, and your withdraw path had
+  the same bug.** The deposit's `approve` went out as **chainId 1** to
+  `mainnet.rpc.privy.systems`; it failed only because the wallet held no
+  mainnet ETH. Privy had no `supportedChains`, so the wallet sat on mainnet, and
+  `useWalletSigner.sendTransaction` dropped the `chainId` it was given — the
+  `chainId` your `transactionFor()` sends was never used. Fixed in both places
+  (`76e2ca3`). If you ever touch that function: `switchChain` does not update a
+  provider that already exists, so fetch the provider after switching.
+- **Privy's own prompts are off app-wide (`971bd05`).** Every Arc payment is
+  typed data, which Privy prompts for, so a trial put a modal over a running
+  game every minute. The setting carries the two conditions that make it safe;
+  the second is that uploaded games stay on their own origin.
+- **The trial gate**: a trial opened signed out kept the server's
+  `gatewayDeposit: null` after sign-in and skipped the deposit; a deposit left
+  nothing for its own gas (now $0.01 is held back, measured need 0.0036); and
+  "Step 3 of 3" was shown to people who never saw 1 or 2, in checkout too.
+- **Uploads**: the browser's 90s cap was shorter than `ingestBuild` alone (93s
+  and 305s for the same build). XHR with a stall timer now, and a progress
+  panel that only shows a percentage where one is real.
+- **`/money`** shows what is set aside in Gateway, from the route above.
+
+**Verified on chain rather than assumed:** the client's exact deposit calldata
+from a fresh wallet funded with the tightest amount it now allows: both
+transactions succeed on 5042002, 0.0036 USDC of gas against the $0.01 reserve,
+Gateway credits it in 2.3s against a 15s poll.
+
+**Needs from you:** nothing. **Worth knowing:** there is still no way to take
+a Gateway balance back out. Circle's same-chain `withdraw` (one signature and
+one transaction, ~$0.0035 fee) would do it, and `depositWithPermit` from my
+2026-10-04 note would shrink the deposit to one signature.
+
+**Next:** clicking through publish, withdraw, agent funding and a signed-out
+trial.
+
