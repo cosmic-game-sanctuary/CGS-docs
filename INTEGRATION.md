@@ -1505,12 +1505,49 @@ IERC20(usdcAddress).approve(walletAddress, amount);
 IGatewayWallet(walletAddress).deposit(usdcAddress, amount);
 ```
 
-A sensible `amount` is a few chunks' worth — $1 covers over 30 chunks at the
-`chunkPriceUnits` games tend to use. One deposit lasts across every game with
-a trial, not just this one: it's a single Gateway balance, not per-game.
-After it lands, `availableUnits` catches up within a few seconds — poll
-`GET /trial` rather than assuming it's instant, the same as any other
-read-right-after-write on this backend.
+**A sensible `amount` is the trial's own `worstCaseUnits` minus whatever
+`availableUnits` already holds, capped at the wallet's balance** — what
+`CGS-client` actually shipped, and better than the flat-dollar suggestion this
+section originally made. Depositing the worst case means the meter can never
+run dry mid-game, which is the failure worth designing out since it would
+interrupt someone while playing; capping at the wallet avoids asking for money
+that isn't there, since the funding rung before this one only guarantees one
+chunk's price. **Leave the buyer's wallet holding a small margin** — don't
+deposit down to zero — or they have nothing left for the deposit's own gas
+(measured: ~0.0036 USDC for both transactions together).
+
+One deposit lasts across every game with a trial, not just this one: it's a
+single Gateway balance, not per-game. After it lands, `availableUnits`
+catches up within a few seconds (measured: ~2.3s) — poll `GET /trial` rather
+than assuming it's instant, the same as any other read-right-after-write on
+this backend.
+
+**`GET /api/me/gateway`, added 2026-10-05 — what's already set aside, outside
+any one game's trial.** The unplayed rest of a deposit is real money and
+isn't in the wallet balance anywhere else; worth a line on `/money` or
+wherever else a balance is shown, not just inside a trial.
+
+```
+GET /api/me/gateway        requireAuth
+```
+```json
+{ "availableUnits": "240000", "availableUsd": 0.24,
+  "asset": "0x3600000000000000000000000000000000000000", "assetDecimals": 6 }
+```
+
+Its own route rather than a field on `/api/me`, deliberately: reading it is a
+call to Circle, and `/api/me` runs on every page load and decides whether
+sign-in worked — coupling that to a third party's latency would make every
+page as slow as Circle's slowest answer, for a number only one page needs.
+Bounded at 8 seconds server-side; a failure answers `503
+GATEWAY_UNAVAILABLE` rather than a zero, because "we could not ask" and
+"there is nothing there" are different claims about somebody's money, and the
+second one would be false.
+
+**No withdrawal exists yet.** A Gateway balance can currently only be spent on
+a trial chunk — there is no route to take it back out to the wallet. Circle's
+own same-chain `withdraw` (one signature, one transaction, ~$0.0035 fee)
+would add that; not built, flagged here so it isn't assumed to exist.
 
 ### Buying a chunk
 
@@ -1575,6 +1612,19 @@ code: there was no browser-automation tool available in that session, so
 nothing below was confirmed by clicking it. Where a claim is about what a user
 sees on screen, treat it as a strong inference and worth 60 seconds in a
 browser before you start.
+
+> **All six items done, 2026-10-05.** Suparno shipped and browser-tested all
+> six (`c4a6c0f`..`3804cea` on `CGS-client`, plus the three backend
+> prerequisites in `0a51ac0`..`7a68dd4` on `CGS-server`) — not just fixed, but
+> clicked through with a real Privy wallet, which found four more bugs no
+> check script could have (they sign with a raw key, never through Privy): the
+> embedded wallet sending on Ethereum mainnet instead of Arc, Privy's own
+> "sign this" modal popping over a running game every minute, the trial gate
+> losing the deposit requirement across a sign-in, and an upload timeout
+> shorter than a real publish takes. Kept below as the record of what the
+> first pass found; the live details and what's still unclicked (publish,
+> withdraw, agent funding, a signed-out trial) are in `PROGRESS-LOG.md`'s
+> 2026-10-05 entries.
 
 ### 1. Trials are completely broken, and need new UI — **read**
 
