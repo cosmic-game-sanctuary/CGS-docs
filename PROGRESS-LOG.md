@@ -51,21 +51,26 @@ describes the Hedera build.
 ### Backend · CGS-server
 
 **Porting to Arc, stages 1–7 done plus Stage 8's local half (2026-10-03).**
-**Frontend: your punch list is `INTEGRATION.md` §19b** — four real things to
-fix, trials being the big one (they need a new Gateway deposit step and do not
-work in the browser at all without it). Payments, fulfilment,
+**Frontend: your punch list is `INTEGRATION.md` §19b** — all six items on it
+shipped and browser-tested by Suparno 2026-10-05. Payments, fulfilment,
 publishing, claiming, the wishlist agent, and paid trial chunks all run on Arc
-testnet — ten check scripts pass (`npm run arc:check*`), agent purchase and the
-contested-round decision included, against a real running server. A buyer
-holding exactly a game's price and no gas can buy it; the money lands in that
-game's own `SplitVault` and payees claim from there; the agent discovers
-listings from `GameRegistry` events and has a real ERC-8004 identity; a trial
-chunk settles through Circle Gateway's nanopayment batching — deposit once,
-every chunk after is gas-free. **Hedera is fully deleted from this repo** — no
-`@hiero-ledger/sdk`, no Hedera env vars. **Contract changes the frontend
-needs** are in the 2026-10-03 log entries, and `INTEGRATION.md` §19 has the new
-one-time Gateway deposit step. Everything below describes the Hedera build,
-which is what the parts not yet ported (Stages 8–9) still do.
+testnet — twelve check scripts pass (`npm run arc:check*`), agent purchase and
+the contested-round decision included, against a real running server. As of
+2026-10-07, so does Gateway withdraw (new — `INTEGRATION.md` §21) and the
+regular wallet withdrawal, run for real for the first time rather than only
+read as correct. A buyer holding exactly a game's price and no gas can buy
+it; the money lands in that game's own `SplitVault`, payees claim from there
+(gas paid by this platform), and from a payee's own wallet a regular
+withdrawal sends it anywhere — another wallet, an exchange, anything with its
+own key. The agent discovers listings from `GameRegistry` events and has a
+real ERC-8004 identity; a trial chunk settles through Circle Gateway's
+nanopayment batching — deposit once, every chunk after is gas-free, and an
+unused deposit can now come back out the same way. **Hedera is fully deleted
+from this repo** — no `@hiero-ledger/sdk`, no Hedera env vars. **Contract
+changes the frontend needs** are in the 2026-10-03 and 2026-10-07 log entries,
+and `INTEGRATION.md` §19/§21 have the Gateway deposit and withdraw steps.
+Everything below describes the Hedera build, which is what the parts not yet
+ported (Stages 8–9) still do.
 
 **Stage:** Feature-complete on this side. All 8 numbered stages done, Stage 9 (profile plumbing, library, likes, comments, playtime) on top of those, Stages 10–16 close out almost everything the product-gap review found, and Stages 17–20 (sales, the agent rebuilt as one-per-person, its decision layer, paid trials) are **done and on `main`** — the whole agent-and-payments redesign is shipped. Built and verified on live Neon, Hedera testnet, Blocky402, Sepolia, Pinata, and Groq. No route returns `501`.
 **Working end to end:** a real buyer pays through x402 and the GameKey lands in their account. On `agent`: one agent wallet per person, several wanted games and a shared budget, subscribed to the public listings topic and buying with no human present — see §18. A subregistry we own on Sepolia, `cgs-sanctuary.eth` registered under it, studio subnames minted for real on studio creation, and now an agent can claim one too. A moderation report immediately delists, and a human resolution can restore it, confirm it, or genuinely unpin it from IPFS. `GET /api/me` and `GET /api/me/library` answer "who am I" and "what do I own" for real against the Mirror Node.
@@ -2819,4 +2824,45 @@ one transaction, ~$0.0035 fee) would do it, and `depositWithPermit` from my
 
 **Next:** clicking through publish, withdraw, agent funding and a signed-out
 trial.
+
+### 2026-10-07 · Backend · Priyanshu
+
+**Shipped:** the Gateway withdraw you flagged as missing (2026-10-05 note),
+plus a real end-to-end run of the regular wallet withdrawal that an old
+status note had called "written, never run" — it's run now.
+
+**Changes the contract:** `INTEGRATION.md` §19's "no withdrawal exists yet"
+line is gone, replaced with `POST /api/me/gateway/withdraw/prepare` +
+`/complete` — same prepare/sign/complete shape as everything else, except
+`complete` hands back a `mintTransaction` the client sends itself (Circle
+attests a burn intent; redeeming it on-chain is a separate step, not
+something this server can do on a buyer's behalf). New §21 has the full
+contract and how this fits next to the deposit UI you already built.
+
+**Proven against real testnet, not just read as correct:**
+- `npm run arc:check:gateway:withdraw` (new, 10/10) — deposit, sign a burn
+  intent, Circle attests it, the mint lands on-chain, the wallet's balance
+  goes up and Gateway's own balance goes down by exactly the withdrawn
+  amount. Also proves a wrong-wallet signature and a replayed `withdrawId`
+  both refuse.
+- `npm run arc:check:withdraw` (new, 10/10) — the plain `/api/me/withdraw`
+  path nobody had actually run end to end: fund a wallet, withdraw part of
+  it to a separate address, withdraw the rest via the "send everything you
+  can afford" default, confirm the destination received both.
+
+**One real gotcha, now in `CGS-server/CLAUDE.md`'s table:** Circle's own
+reference SDK's `withdraw()` raced a chunk settlement that had just
+happened in the same test run and failed with a same-asset-shaped
+"insufficient balance" — Gateway's ledger hadn't caught up yet. Same family
+as every other read-right-after-write race already in that table; our own
+`prepareGatewayWithdraw` reads the live available balance right before
+building the intent, which is the same defence already used everywhere
+else this shows up.
+
+**Needs from you:** nothing blocking. The withdraw-from-Gateway UI is new
+work, not a fix — natural to pair with wherever the deposit step and the
+trial HUD landed.
+
+**Next:** nothing queued on this side; flag if something else from the
+2026-10-05 list should move up.
 

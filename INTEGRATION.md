@@ -1544,10 +1544,46 @@ GATEWAY_UNAVAILABLE` rather than a zero, because "we could not ask" and
 "there is nothing there" are different claims about somebody's money, and the
 second one would be false.
 
-**No withdrawal exists yet.** A Gateway balance can currently only be spent on
-a trial chunk — there is no route to take it back out to the wallet. Circle's
-own same-chain `withdraw` (one signature, one transaction, ~$0.0035 fee)
-would add that; not built, flagged here so it isn't assumed to exist.
+**Withdrawing it back out, added 2026-10-07 — built and proven against real
+testnet (`npm run arc:check:gateway:withdraw`, all 10 checks), no frontend UI
+yet.** Two steps, same shape as every other signed action in this app:
+
+```
+POST /api/me/gateway/withdraw/prepare   requireAuth   { amountUnits?: string }
+```
+```json
+{ "withdrawId": "…", "typedData": { "domain": {...}, "types": {...},
+    "primaryType": "BurnIntent", "message": {...} },
+  "amountUnits": "120000", "amountUsd": 0.12, "expiresAt": "…" }
+```
+
+Omit `amountUnits` to withdraw everything currently available. Sign
+`typedData` exactly as given with the connected wallet (`signTypedData`,
+same call as every other typed-data signature here) — **don't hand-build
+this payload**, Circle's burn-intent domain is deliberately different from
+a trial chunk's (no `chainId`/`verifyingContract` in the domain; the chain
+information lives in the `spec` fields instead), so it has to come from the
+server, not be constructed to match what a deposit or a purchase signs.
+
+```
+POST /api/me/gateway/withdraw/complete   requireAuth   { withdrawId, signature }
+```
+```json
+{ "amountUnits": "120000", "amountUsd": 0.12,
+  "mintTransaction": { "to": "0x0022…475B", "data": "0x…", "chainId": 5042002 } }
+```
+
+Circle attests the burn here — this call reaches out to Circle, same as
+`prepare` on a trial chunk reaching the facilitator. **`mintTransaction` is
+the last step and it's on the client**: send it with the connected wallet,
+paying its own gas, same as the Gateway deposit's two transactions. The
+money isn't back in the wallet until that transaction confirms — there's no
+third server call for it, the mint is the whole point of sending it.
+
+`withdrawId` expires in 10 minutes and is single-use, same as a regular
+withdrawal's `intentId`. A withdrawal above what's actually available, or a
+signature from the wrong wallet, both refuse with `422`/`403` before
+anything reaches Circle.
 
 ### Buying a chunk
 
@@ -1846,3 +1882,37 @@ the real check). Both fields null clears the trial.
 
 None of the three depend on each other. Pick whichever's most useful for the
 demo first.
+
+---
+
+## 21. Gateway withdraw, and the full earned-money path — 2026-10-07
+
+Two things landed together because they're the same question asked from two
+directions: "how does money that's briefly inside this app's machinery get
+back to someone's own hands."
+
+**Gateway withdraw is new — §19's contract updated in place, see there for
+the request/response shapes.** Proven against real testnet and real Circle
+Gateway end to end (`npm run arc:check:gateway:withdraw`, 10/10): deposit,
+sign a burn intent, Circle attests it, the client mints it back on-chain,
+the wallet balance goes up and Gateway's own balance goes down by exactly
+that much. No UI yet. Natural home: wherever §20 put the deposit step and
+the trial HUD — a small "take unused balance back" action, probably on
+`/money` next to the regular withdrawal, since by the time anyone wants this
+they're not mid-trial any more.
+
+**The already-built earned-money path, now fully proven rather than just
+read as correct — worth restating because an old status note called the
+transfer step "written, never run":** a sale credits a game's `SplitVault`
+directly; `POST /api/me/claim/:gameId` releases a payee's share from there
+into their own wallet, gas paid by this platform (`claimFor`, §6.2) — proven
+by `arc:check:publish`'s three payees. From there, that money is
+indistinguishable from any other USDC in their wallet, and
+`POST /api/me/withdraw/prepare` + `/complete` (§6.1) sends it anywhere they
+point it — another wallet, an exchange deposit address, anything with its
+own key. **Now run for real, not just read**: `npm run arc:check:withdraw`
+funds a wallet, withdraws part of it to a separate address, withdraws the
+rest with `amountUnits` omitted (the "send everything you can afford"
+default), and confirms the destination actually received both — 10/10. If
+this is still unclicked in a browser per `PROGRESS-LOG.md`, that's the one
+remaining gap; the backend mechanism itself is no longer a question mark.
