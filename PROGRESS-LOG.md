@@ -2866,3 +2866,61 @@ trial HUD landed.
 **Next:** nothing queued on this side; flag if something else from the
 2026-10-05 list should move up.
 
+### 2026-10-12 · Backend · Suparno
+
+Built the client for your Gateway withdraw, and before building on it ran the
+one amount the client offers — "everything" — through the real routes. Two
+bugs, both in paths `arc:check:gateway:withdraw` cannot reach, both fixed.
+
+**Shipped:**
+
+- **"Withdraw everything" was refused by Circle every time (`c131a84`).**
+  Circle's fee comes out on top of the signed amount, from the same balance,
+  so `amountUnits ?? available` can never settle. Measured from a fresh
+  wallet holding 0.05: all of it refused, `"available 0.050000, required
+  0.0535"`; all minus 0.01 settled. Your check withdraws half the deposit, so
+  it never hit this, and the refusal lands in `complete`, after the person
+  has signed. Now `available - MAX_FEE_UNITS`: the ceiling the intent caps
+  Circle at, so it can never be refused for fees whatever the real fee is
+  (0.0035 on both balances I tried). Leaves up to 0.0065 of dust.
+- **`POST /gateway/withdraw/prepare` returned a 500 on every call
+  (`bc3f18b`).** `res.json` throws on a bigint, and the burn intent's message
+  carries three. Your check calls the service directly, so it never went
+  over HTTP. `burnIntentForWire` stringifies them at the route, the same way
+  `preparedShape` does for a purchase; the service still returns bigints, so
+  your script is unchanged.
+
+**Proven end to end over a real JSON round trip**, fresh wallet, Arc
+testnet: the prepare body serialises, a signature over the parsed strings
+recovers in `complete` against your bigint original, the mint lands, the
+wallet gets the amount less 0.0034 gas, and nothing withdrawable remains.
+
+**Changes the contract:** `GET /api/me/gateway` gains `withdrawableUnits` and
+`withdrawableUsd`, which is what can actually come out. §19's "omit
+`amountUnits` to withdraw everything currently available" now means
+everything *withdrawable*; worth a word in the doc.
+
+**One design question for you, not blocking.** The burn intent has
+`destinationCaller: zeroAddress` and `maxBlockHeight: maxUint256`, so anyone
+can submit the mint, forever, and it always pays the recipient. That means
+**this server could submit it**, with the operator paying the gas the way
+`claimFor` already does. Today the browser has to, which is the one place in
+the flow where money can sit released but uncollected: if the mint send
+fails and the tab closes, nothing anywhere still holds the attestation. The
+client guards against it (a gas check before signing, and a "Finish sending"
+retry that keeps the transaction), but minting server-side would remove the
+failure entirely, and a user with an empty wallet could still withdraw.
+
+### 2026-10-12 · Frontend · Suparno
+
+**Shipped:** "Take $0.23 back" on `/money`, inside the set-aside line in the
+wallet card. Prepare, sign the burn intent as sent, complete, then the wallet
+sends the mint itself. Shows what can come out, not what is there. A failed
+mint keeps its transaction and offers to finish sending. Amounts under a cent
+are not shown, so a full withdrawal's leftover dust does not leave "$0.01 set
+aside" behind it.
+
+**Not yet clicked in a browser.** Everything up to Privy is proven on chain;
+Privy signing a burn intent is the one untested link, though it is the same
+v4 typed-data call purchases already make.
+
