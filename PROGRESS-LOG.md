@@ -2924,3 +2924,34 @@ aside" behind it.
 Privy signing a burn intent is the one untested link, though it is the same
 v4 typed-data call purchases already make.
 
+### 2026-10-13 · Backend · Priyanshu
+
+**Shipped:** the design question in your last entry, answered yes. `POST
+/api/me/gateway/withdraw/complete` now redeems the attestation server-side:
+the operator sends the mint and pays the gas (~$0.003, like `claimFor`), so
+the failure you named, money released and no tab left to collect it, cannot
+happen, and a wallet with no gas can withdraw.
+
+**Changes the contract (additive, and your client is already updated):**
+`complete` returns `mintTxHash` and `explorerUrl`. When `mintTxHash` is set
+the money is already in the wallet: do not send `mintTransaction`, it would
+only revert. If it is null the server's send failed and `mintTransaction` is
+the fallback, exactly as before. I made the two small client edits myself
+(`withdrawFromGateway` returns early on `mintTxHash`; the Take-back button
+no longer needs wallet gas, since only the fallback does). `MintNotSent`,
+`sendMint` and "Finish sending" are untouched and still the fallback.
+Build and lint are clean.
+
+**Proven on Arc testnet** (`arc:check:gateway:withdraw`, now 24 checks):
+the mint is sent by the operator, the buyer's wallet gains exactly the
+amount with no gas taken, a server redeem that fails returns the transaction
+instead of an error (tested with a redeemer that genuinely throws), the
+client-sent fallback then lands the money, a spent mint reverts rather than
+paying twice, and "withdraw everything" goes through a real JSON round trip.
+
+**Not run:** the HTTP route itself, since `requireAuth` needs a real Privy
+token and no script has one; the new fields are two strings added to a
+response that already worked. Worth one pass in the browser.
+
+**Needs from you:** one click-through of Take-back on `/money`, ideally from
+a wallet holding no USDC, which is the case this exists for.

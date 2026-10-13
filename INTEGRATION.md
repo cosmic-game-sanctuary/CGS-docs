@@ -1582,15 +1582,25 @@ POST /api/me/gateway/withdraw/complete   requireAuth   { withdrawId, signature }
 ```
 ```json
 { "amountUnits": "120000", "amountUsd": 0.12,
+  "mintTxHash": "0x…", "explorerUrl": "https://explorer.testnet.arc.io/tx/0x…",
   "mintTransaction": { "to": "0x0022…475B", "data": "0x…", "chainId": 5042002 } }
 ```
 
-Circle attests the burn here — this call reaches out to Circle, same as
-`prepare` on a trial chunk reaching the facilitator. **`mintTransaction` is
-the last step and it's on the client**: send it with the connected wallet,
-paying its own gas, same as the Gateway deposit's two transactions. The
-money isn't back in the wallet until that transaction confirms — there's no
-third server call for it, the mint is the whole point of sending it.
+Circle attests the burn here, and **the server then redeems the attestation
+itself** (2026-10-13): the operator sends the mint and pays its gas (~$0.003,
+the same arrangement as `claimFor`). When `mintTxHash` is set the money is
+already in the wallet — there is nothing left to send, and a wallet holding
+no gas at all can withdraw. The recipient is fixed inside the signed burn
+intent, so paying the gas gives us no say over where it goes.
+
+**`mintTxHash: null` is the fallback, not an error.** If the server's own
+send fails (operator out of gas, an RPC hiccup) the response still succeeds
+and `mintTransaction` must be sent with the connected wallet, paying its own
+gas. Circle has released the money by then and the attestation is the only
+thing that can collect it, so never drop `mintTransaction` on the floor; keep
+it until a send succeeds (the client's `MintNotSent` does exactly this).
+Sending a mint that was already redeemed is harmless: it reverts and costs
+gas, not money.
 
 `withdrawId` expires in 10 minutes and is single-use, same as a regular
 withdrawal's `intentId`. A withdrawal above what's actually available, or a
