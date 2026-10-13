@@ -1532,6 +1532,7 @@ GET /api/me/gateway        requireAuth
 ```
 ```json
 { "availableUnits": "240000", "availableUsd": 0.24,
+  "withdrawableUnits": "230000", "withdrawableUsd": 0.23,
   "asset": "0x3600000000000000000000000000000000000000", "assetDecimals": 6 }
 ```
 
@@ -1557,7 +1558,18 @@ POST /api/me/gateway/withdraw/prepare   requireAuth   { amountUnits?: string }
   "amountUnits": "120000", "amountUsd": 0.12, "expiresAt": "…" }
 ```
 
-Omit `amountUnits` to withdraw everything currently available. Sign
+Omit `amountUnits` to withdraw **everything that can come out**, which is
+less than everything that is there: Circle's fee is taken *on top of* the
+amount signed for, from the same balance, and it refuses an intent that
+leaves no room for it. The server holds back its fee ceiling (0.01), so
+"everything" means `availableUnits − 10000`, and up to ~0.0065 of dust stays
+in Gateway (still the depositor's, still spendable on a trial). Asking for
+more than that is refused `422` at `prepare`, before anyone signs. Don't
+compute it yourself: `GET /api/me/gateway` returns `withdrawableUnits` /
+`withdrawableUsd` next to `availableUnits` — show those as "what can come
+back". The `uint256` fields in `typedData.message` (`maxBlockHeight`,
+`maxFee`, `spec.value`) are **decimal strings**, like every other amount on
+the wire; pass `typedData` to the wallet exactly as received. Sign
 `typedData` exactly as given with the connected wallet (`signTypedData`,
 same call as every other typed-data signature here) — **don't hand-build
 this payload**, Circle's burn-intent domain is deliberately different from
