@@ -19,7 +19,7 @@ The catch? Traditional Web3 stores have way too much friction for normal gamers.
 ## Try It Yourself in 2 Minutes
 
 1. **Sign in with Email:** Open **[cgs.blackslate.me](https://cgs.blackslate.me)** and log in with any email via Privy—no browser extensions or seed phrases required.
-2. **Buy a Game with USDC:** Pay for the game and the tiny gas fee (~$0.007) from the same stable USDC balance. Funds settle directly into that game's dedicated on-chain vault.
+2. **Buy a Game with USDC:** Pay the game's price from your USDC balance and nothing else: you never pay gas. The transfer is settled for you and the funds land directly in that game's dedicated on-chain vault.
 3. **Verify on the Explorer:** Open the vault on **[explorer.arc.io](https://explorer.arc.io)**. Collaborator revenue splits are permanently fixed in the contract's constructor—not even we have a function to change them.
 
 *Want to test the entire flow without spending real money? **[testnet.cgs.blackslate.me](https://testnet.cgs.blackslate.me)** is an exact twin with a built-in faucet button.*
@@ -38,7 +38,7 @@ The catch? Traditional Web3 stores have way too much friction for normal gamers.
 ## Why Arc Mainnet Makes This Possible
 
 * **Single-Token UX (USDC for Games + Gas):** Gamers price games in US dollars and pay gas in the exact same USDC, eliminating volatile gas tokens.
-* **5% Flat Fee vs. Steam’s 30%:** Because settling a sale on Arc costs roughly **$0.007 in gas** regardless of how many collaborators split the revenue, a hard-coded 5% platform fee is enough to run sustainably—giving indie studios a real reason to publish on Arc.
+* **5% Flat Fee vs. Steam’s 30%:** Because settling a sale on Arc costs us roughly **$0.007 in gas** (we pay it, not the player) regardless of how many collaborators split the revenue, a hard-coded 5% platform fee is enough to run sustainably—giving indie studios a real reason to publish on Arc.
 * **Built Specifically for Arc’s Rules:**
   * **Pull-based payouts:** Prevents a single blocklisted address from freezing payouts for other collaborators on the same game.
   * **Gas-sponsored first claims:** New developers who hold $0 USDC don't get stuck—we sponsor the gas to release their very first earnings.

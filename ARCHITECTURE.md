@@ -28,7 +28,7 @@ lives on a public chain, so none of it needs us online or honest.
 | Frontend | Vite, React 19, Tailwind v4 |
 | Chain | Arc mainnet (chain 5042), with a full testnet twin (5042002) |
 | Contracts | `GameRegistry`, `GameKey`, `SplitVault`, `VaultFactory`, written for this project |
-| Payments | [x402](https://x402.org) over HTTP, settled by Circle's Facilitator; trials through Circle Gateway nanopayments |
+| Payments | [x402](https://x402.org) over HTTP. The buyer's signed USDC authorization is settled on chain (by Circle's Facilitator Service where our key is enabled, otherwise by our operator); trials through Circle Gateway nanopayments |
 | Agent identity | [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) IdentityRegistry, predeployed on Arc |
 | Wallets + login | Privy |
 | Names | ENSv2 on Sepolia |
@@ -46,7 +46,7 @@ The request to download the build comes back `402 Payment Required` with terms
 attached, and `payTo` is **the game's own vault**:
 
 ```
-browser                  server              Circle Facilitator        Arc
+browser                  server         Circle / operator submit      Arc
    │ GET /games/:id/download │                        │                  │
    │ ───────────────────────>│                        │                  │
    │ 402 + terms (payTo = vault)                      │                  │
@@ -62,10 +62,15 @@ browser                  server              Circle Facilitator        Arc
    │ <───────────────────────│                        │                  │
 ```
 
-The buyer signs once, off chain, with their own key. Circle's facilitator
-broadcasts the transfer, **pays the settlement gas**, and screens both parties.
-The USDC goes from the buyer straight into the game's vault. The only gas we pay
-for a sale is minting the buyer's `GameKey`, about $0.004.
+The buyer signs once, off chain, with their own key, and never pays gas. Anyone
+holding that signature can submit it to USDC's own `transferWithAuthorization`,
+and the USDC goes from the buyer straight into the game's vault.
+
+On testnet Circle's Facilitator Service submits it and pays the gas. On mainnet
+our Circle key is not yet enabled for the Facilitator Service (it answers
+`403 forbidden`), so the server falls back to submitting the authorization itself,
+which costs us about $0.003 a sale. Either way the money moves buyer to vault and
+never through us. We also pay for minting the buyer's `GameKey`, about $0.004.
 
 Arc has deterministic finality, so settlement is final on inclusion and there is
 no reorg path to handle.
@@ -226,7 +231,7 @@ gate access: ownership is read from `GameKey`, balances from the vault.
 are paid for with x402 USDC, one of them an AI agent paying for its own reasoning.
 
 **1. Buying a game**: `GET /api/games/:id/download`, settled by Circle's
-Facilitator straight into a vault.
+Facilitator Service on testnet, or submitted by the operator on mainnet, straight into a vault.
 
 **2. The agent's own inference**: `GET /api/agent/verdict`. When the agent has to
 choose between games it cannot both afford, it pays per verdict out of its own
@@ -250,8 +255,10 @@ nanopayments, and stops when they close the tab.
 - Native USDC accounting is 18 decimals and the ERC-20 view is 6, so the vault
   does its arithmetic on the native balance to avoid stranding fractions.
 
-**What a sale costs us**: Circle pays settlement, so about $0.007 in gas
-however many people are on the split. We take 5%, written into the vault.
+**What a sale costs us**: about $0.007 in gas on mainnet ($0.003 to submit the
+transfer, $0.004 to mint the key), however many people are on the split. With
+Circle's facilitator enabled the first part is theirs and it drops to $0.004. We
+take 5%, written into the vault.
 
 ## ENS
 
