@@ -253,6 +253,11 @@ the key already and nothing was charged. `409 PAYMENT_PENDING` — settlement di
 not resolve inside the wait window; it is **not** a failure and the payment may
 still land.
 
+`409 CREDIT_WALLET_MISMATCH` — the purchase was priced with trial credit earned
+by the signed-in wallet, but the payment was signed by a different one. Trial
+credit applies only to the wallet that earned it; sign with the same wallet.
+Nothing was charged.
+
 > ### ⚠ `PAYMENT_PENDING` changed status, and the old behaviour was dangerous
 >
 > **It was `202`. It is now `409`.** Changed 2026-10-03, and worth
@@ -527,8 +532,12 @@ Move your share of one game out of its vault.
   "amount": {"units":190000,"display":0.19,"assetDecimals":6},
   "txHash":"0x…" }
 ```
-`409 NOTHING_TO_CLAIM` when there is nothing waiting, which is an ordinary outcome
-rather than an error worth alarming anyone about. One call per game, because each
+`409 NOTHING_TO_CLAIM` when there is nothing waiting, or when the share is below
+the minimum we pay the gas to release (**$0.005**; the message says so and the
+amount keeps accumulating, and the payee can always call `claim()` from their own
+wallet). It is an ordinary outcome rather than an error worth alarming anyone
+about. `429 CLAIM_TOO_SOON` when a claim for that wallet was just made or is
+still in flight; wait a few seconds and re-read `/me/earnings`. One call per game, because each
 game has its own vault and each claim is its own transaction.
 
 **We pay the gas for this, and it is necessity rather than generosity.** Gas on
@@ -1754,7 +1763,7 @@ The type is `ApiErrorCode | string`, so unknown codes work at runtime; this is
 about autocomplete and about knowing the code exists. Emitted by the server and
 absent from the union, the ones that actually matter:
 
-`ALREADY_OWNED` · `PAYMENT_PENDING` · `NOTHING_TO_CLAIM` · `NO_AGENT` ·
+`ALREADY_OWNED` · `PAYMENT_PENDING` · `CREDIT_WALLET_MISMATCH` · `NOTHING_TO_CLAIM` · `CLAIM_TOO_SOON` · `NO_AGENT` ·
 `CHAIN_NOT_CONFIGURED` (503, a server misconfiguration rather than anything a
 user did) · `ABOVE_MANDATE` · `ALREADY_RESOLVED` · `AGENT_EXISTS` ·
 `AGENT_ALREADY_RETIRED` · `NOT_ASKABLE` · `HANDLE_TAKEN` · `STUDIO_EXISTS` ·
