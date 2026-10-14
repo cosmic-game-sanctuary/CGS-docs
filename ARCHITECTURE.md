@@ -1,26 +1,21 @@
 # How it works
 
-> **We're building for Arc now.** Everything below describes the system exactly
-> as it runs today, on Hedera — it's all checkable, nothing here is aspirational.
-> We're porting it to [Arc](https://www.arc.io/), Circle's EVM L1 where USDC is
-> the gas token, because the two guarantees this page describes — a buyer keeps
-> what they bought, a split can't change after the fact — become contract code
-> there instead of a promise backed by a key we chose not to hold. This page
-> gets rewritten for Arc once that's live; see the [README](README.md) for the
-> short version of why.
+CGS is a storefront for browser-playable indie games that runs on
+[Arc](https://www.arc.io/), Circle's EVM L1 where USDC is the gas token.
 
-Three things here are unusual: an **autonomous agent** with its own wallet that
-chooses which games to buy, **revenue splits** that pay a whole team in one
-atomic transaction, and **trials metered by the minute** over x402.
+Three things here are unusual: **revenue splits enforced by a contract** that pays
+a whole team without the money ever touching us, an **autonomous agent** with its
+own wallet that chooses which games to buy, and **trials metered by the minute**
+over x402 and Circle Gateway.
 
-Everything they depend on — the money, the ownership token, the price history —
-lives on public infrastructure, so none of it needs us online or honest.
+Everything they depend on, the money, the ownership token and the price history,
+lives on a public chain, so none of it needs us online or honest.
 
-📺 **[Full demo](https://youtu.be/WyJehf7Vgb4)** · 📖 [The pitch](README.md) · 🔌 [API contract](INTEGRATION.md)
+🕹️ **[Try it](https://cgs.blackslate.me)** · 📖 [The pitch](README.md) · 🔌 [API contract](INTEGRATION.md) · 📜 [Contracts](https://github.com/cosmic-game-sanctuary/CGS-contracts)
 
 **Jump to:** [Buying](#buying-a-game) · [Publishing](#publishing) ·
 [The agent](#the-agent) · [Paid trials](#paid-trials) ·
-[On-chain reference](#whats-on-chain) · **Sponsors:** [Hedera](#hedera) ·
+[On-chain reference](#whats-on-chain) · **Sponsors:** [Circle and Arc](#circle-and-arc) ·
 [ENS](#ens) · [Privy](#privy) · [Gaps](#whats-not-done)
 
 ---
@@ -31,71 +26,83 @@ lives on public infrastructure, so none of it needs us online or honest.
 |---|---|
 | Backend | Node, TypeScript, Express, Postgres via Drizzle |
 | Frontend | Vite, React 19, Tailwind v4 |
-| Money + ownership | Hedera testnet — HTS, HCS, Mirror Node |
-| Payments | [x402](https://x402.org) over HTTP, settled by Blocky402 |
+| Chain | Arc mainnet (chain 5042), with a full testnet twin (5042002) |
+| Contracts | `GameRegistry`, `GameKey`, `SplitVault`, `VaultFactory`, written for this project |
+| Payments | [x402](https://x402.org) over HTTP, settled by Circle's Facilitator; trials through Circle Gateway nanopayments |
+| Agent identity | [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) IdentityRegistry, predeployed on Arc |
 | Wallets + login | Privy |
 | Names | ENSv2 on Sepolia |
 | Builds | IPFS via Pinata |
 | Agent reasoning | Groq, `openai/gpt-oss-20b`, strict JSON schema |
 
-No Solidity. ENS's contracts handle names, Hedera's native services handle
-everything else.
-
 ---
 
 ## Buying a game
 
-You sign in with an email. Privy makes you a wallet. You press buy, and about
-four seconds later the game is running in the same tab.
+You sign in with an email. Privy makes you a wallet. You press buy, and seconds
+later the game is running in the same tab. You never need to hold gas.
 
-Underneath, the request to download the build comes back `402 Payment
-Required` with terms attached. What happens next is the part worth looking at:
+The request to download the build comes back `402 Payment Required` with terms
+attached, and `payTo` is **the game's own vault**:
 
 ```
-browser                      server                  Blocky402        Hedera
-   │  GET /games/:id/download   │                        │               │
-   │ ──────────────────────────>│                        │               │
-   │  402 + terms               │                        │               │
-   │ <──────────────────────────│                        │               │
-   │                            │ builds + freezes the transfer          │
-   │  hashes to sign            │                        │               │
-   │ <──────────────────────────│                        │               │
-   │  secp256k1_sign via Privy  │                        │               │
-   │ ──────────────────────────>│ ─────────────────────> │ ─────────────>│
-   │                            │                 verify + settle        │
-   │  build + playUrl           │                        │               │
-   │ <──────────────────────────│                        │               │
+browser                  server              Circle Facilitator        Arc
+   │ GET /games/:id/download │                        │                  │
+   │ ───────────────────────>│                        │                  │
+   │ 402 + terms (payTo = vault)                      │                  │
+   │ <───────────────────────│                        │                  │
+   │ Privy eth_signTypedData_v4                       │                  │
+   │ (EIP-3009 transferWithAuthorization, offchain)   │                  │
+   │ retry + signed authorization                     │                  │
+   │ ───────────────────────>│ ─────── settle ──────> │ ───────────────> │
+   │                         │                        │  USDC → vault    │
+   │                         │ <───── tx hash ─────── │                  │
+   │                         │ mint GameKey ────────────────────────────> │
+   │ build + playUrl         │                        │                  │
+   │ <───────────────────────│                        │                  │
 ```
 
-The server freezes the transfer because that needs a Hedera client. The
-browser signs it because the key is yours. We never hold it.
+The buyer signs once, off chain, with their own key. Circle's facilitator
+broadcasts the transfer, **pays the settlement gas**, and screens both parties.
+The USDC goes from the buyer straight into the game's vault. The only gas we pay
+for a sale is minting the buyer's `GameKey`, about $0.004.
 
-Settlement is the moment you own the game. The GameKey mint and the revenue
-split both run *after* the response, so you are playing while the chain work
-finishes behind you.
+Arc has deterministic finality, so settlement is final on inclusion and there is
+no reorg path to handle.
 
 ---
 
 ## Publishing
 
-Make a studio, optionally claim a name. Drop a zip — it unpacks and runs in
-your browser immediately, before it uploads anywhere, so you see the real build
-rather than a spinner. Set a price. Split the revenue.
+Make a studio, optionally claim a name. Drop a zip, which unpacks and runs in
+your browser before it uploads anywhere, so you see the real build. Set a
+price. Split the revenue.
 
 **You split with people who have only an email address.** Type
 `sam@gmail.com`, 40%, done. Sam is on the credits and earning from the first
-sale, having never touched a wallet. When Sam eventually clicks the link in
-their inbox, everything held for them lands at once.
+sale, having never touched a wallet. When Sam signs in, their share is already
+in the vault under their new wallet.
 
-On publish the splits lock, an HTS NFT collection is created for the game, the
-build is pinned to IPFS twice (directory for provenance, zip for delivery), and
-a `listed` message goes on the public topic.
+On publish, one transaction path does three things: `VaultFactory` deploys a
+**`SplitVault`** for the game, with every payee's share and the platform's 5%
+fixed in its constructor, `GameRegistry` emits `Listed`, and the build is pinned
+to IPFS twice (directory for provenance, zip for delivery).
 
-There is no endpoint to edit a split afterwards. We wrote the product so we
-could not do it either.
+There is no endpoint to edit a split afterwards, and the vault has no setter. The
+vault accounts by arithmetic, not by hooks: `owed = received × share`,
+`claimable = owed − claimed`. It needs no call when money arrives, so a sale
+priced differently, discounted, or paid in trial credit is split correctly with
+no extra code.
 
-When a sale settles, the whole team is paid in **one** `TransferTransaction`:
-one debit, N credits, executed once. Everyone or nobody.
+**Claiming.** A payee calls `claim()`. Because gas on Arc is USDC, a developer
+whose first earnings are still inside the vault holds nothing to pay with, so the
+vault also has `claimFor(address)`: anyone may pay the gas, and the money can only
+go to that payee. We use it to release shares for people who ask, at about
+$0.003 each.
+
+**Why one vault per game.** An EIP-3009 transfer credits a contract without
+calling it, so a payment carries no game id. `payTo` is therefore the game
+identifier, and a shared vault could not tell games apart.
 
 ---
 
@@ -108,21 +115,22 @@ Here is the scenario it exists for, which we have actually run:
 
 A dumb bot buys whichever went on sale first. Ours waits.
 
-It has its own Hedera account, its own Privy wallet, its own
-[HCS-14](https://hashgraphonline.com/docs/standards/hcs-14) identity, and
-optionally its own ENS name. You give it games and a ceiling for each, then
-fund it. The balance *is* the spending cap — there is no cap field because
-there does not need to be one.
+It has its own app-owned Privy wallet and its own **ERC-8004 identity**, and
+optionally its own ENS name. You give it games and a ceiling for each, then fund
+it. The balance is the total budget, and the per-purchase ceiling is enforced
+where the authorization is signed.
 
-**It reads the public listings topic through the Mirror Node.** Not our
-database, not a webhook from us. Someone else could write a competing agent
-against the same feed tomorrow and we could not stop them, which is the point.
+**It reads the public chain.** It polls `GameRegistry` events with `eth_getLogs`
+(`Listed`, `PriceChanged` with the sale's deadline, `BuildUpdated`, `Delisted`).
+Not our database, not a webhook from us. Someone else could write a competing
+agent against the same events tomorrow and we could not stop them, which is the
+point.
 
 **It decides at the wire.** A sale is open until it ends, so buying early gains
-nothing and gives up the chance to compare. The agent schedules itself for an
-hour before the soonest deadline it is watching, and decides then, having seen
+nothing and gives up the chance to compare. The agent schedules itself shortly
+before the soonest deadline it is watching, and decides then, having seen
 everything that arrived in the meantime. A price drop usually just moves the
-alarm clock.
+alarm clock. If a buy fails, it retries within the same window.
 
 **When the choice is genuinely contested, it pays to think.** Most rounds are
 unambiguous and no model is involved. When the money is actually spoken for, it
@@ -134,7 +142,7 @@ GET /api/agent/verdict  →  402 + terms  →  agent signs  →  settle  →  an
 ```
 
 That endpoint takes no request body. What it reasons about comes from *who
-paid* — the settled payment names an account, and the wants and balance are
+paid*: the settled payment names an account, and the wants and balance are
 recomputed server-side from that. A client cannot talk it into considering
 something by lying in a payload.
 
@@ -152,10 +160,11 @@ the transaction that paid for the reasoning.
 Play by the minute before you commit. Same build, same isolated origin, same
 boot as a purchase.
 
-The meter buys the next minute shortly before the current one runs out, each a
-real x402 payment signed quietly by your own wallet. Playing is paying. Close
-the tab and it stops — the loop lives in the page, so there is no server timer
-to cancel and nothing keeps charging you.
+The buyer deposits a little USDC into Circle's `GatewayWallet` once. After that
+the meter buys the next minute shortly before the current one runs out, each a
+real x402 payment signed quietly by your own wallet and settled through Gateway's
+batching, which costs the buyer no gas. Close the tab and it stops. The loop
+lives in the page, so there is no server timer to cancel.
 
 Everything you spent trying it comes off the price if you buy, summed live from
 the payment rows rather than tracked in a counter that could drift.
@@ -164,198 +173,176 @@ When the time is up the game frame is **removed from the page**, not covered. A
 cross-origin build has no pause button to press, so unmounting it is the only
 thing that genuinely stops it.
 
+**Where trial money goes, stated plainly.** Gateway credits a payee a balance
+*inside Gateway*, and a vault has no key to withdraw it. So trial chunks are paid
+to the platform operator, and a relay forwards each game's completed chunks into
+its vault as a normal same-chain transfer once Circle's batch lands (minutes,
+batched about every 16). The relay is a public transaction naming the vault as
+recipient, and the developer's earnings page shows the money as *on its way*
+meanwhile. For those minutes trial money is held by us. **Purchases never are.**
+
 ---
 
 ## What's on chain
 
-Testnet, all public, none of it needs our permission to read.
+All public, none of it needs our permission to read.
+
+| | Arc mainnet (5042) | Arc testnet (5042002) |
+|---|---|---|
+| GameRegistry | [`0x864a…4C6c`](https://explorer.arc.io/address/0x864a562db243C46c5825cBd4224069361b734C6c) | [`0xE7aa…490e`](https://explorer.testnet.arc.io/address/0xE7aa837c45caE001bAc6f026B23edf6e96Ee490e) |
+| GameKey | [`0x3938…11B6`](https://explorer.arc.io/address/0x393889a68b6e78F0138b1bb240e9b3fD151111B6) | [`0xaDC0…9c41`](https://explorer.testnet.arc.io/address/0xaDC0757f81680c7014FbCE73d664653c5c629c41) |
+| VaultFactory (operator-only) | [`0xd2ca…95d0`](https://explorer.arc.io/address/0xd2ca652AbAbbA2E1D6Bab2FFA950BC66e73F95d0) | [`0xCAE4…3BfB`](https://explorer.testnet.arc.io/address/0xCAE4b6037b0AbD416459bD88ae90903a64293BfB) |
+| SplitVault | one per game, deployed at publish | [example](https://explorer.testnet.arc.io/address/0x0F4cbd4cd4C80868459865D996A62F6AfA0ac760) |
+| Settlement asset | native USDC, `0x3600…0000` (6 dp ERC-20 view) | same |
+| Agent identity | ERC-8004 `0x8004A169…a432` | `0x8004A818…BD9e` |
+
+Source is verified on [explorer.arc.io](https://explorer.arc.io), so the claims
+below are readable, not asserted:
+
+- `GameKey` has no owner, pause, burn or freeze function. Its only restricted
+  call is `mint`, limited to a minter fixed at deploy with no setter.
+- `SplitVault` has no owner and no way to change a split.
+- `GameRegistry` can announce but cannot touch a key or a vault.
+- `VaultFactory` deploys a vault only for the operator, so nobody can pre-deploy
+  a vault with their own payees for a game that has not published yet.
+
+ENS lives on Sepolia and is separate from the Arc story:
 
 | | |
 |---|---|
-| Listings topic | [`0.0.10380868`](https://hashscan.io/testnet/topic/0.0.10380868) — listed, price changed, build updated, delisted, relisted, demand |
-| Sales topic | [`0.0.10380869`](https://hashscan.io/testnet/topic/0.0.10380869) — every settled purchase and trial minute |
-| Agent identities | [`0.0.10380872`](https://hashscan.io/testnet/topic/0.0.10380872) — HCS-14, each naming the human funding it |
-| Settlement asset | USDC [`0.0.429274`](https://hashscan.io/testnet/token/0.0.429274) |
-| GameKey | one HTS NFT collection per game |
-| ENS subregistry | [`0xf721…2AF1`](https://sepolia.etherscan.io/address/0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1) on the ENSv2 hackathon deployment, under `cgs-sanctuary.eth` |
-| ENS resolver | [`0xfFC6…49e7`](https://sepolia.etherscan.io/address/0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7) — our own PermissionedResolver proxy |
+| ENS subregistry | [`0xf721…2AF1`](https://sepolia.etherscan.io/address/0xf721c1d6883FC03466d7fCac8Eb9fdfd98432AF1), under `cgs-sanctuary.eth` |
+| ENS resolver | [`0xfFC6…49e7`](https://sepolia.etherscan.io/address/0xfFC642Bea5522Bb07db8123b5a1C0f038fe649e7), our own PermissionedResolver proxy |
 
-**The Mirror Node is the only thing we believe.** SDK receipts and
-`ScheduleInfoQuery.executedAt` can both be stale or wrong. We learned that
-expensively and now nothing counts as done until the mirror agrees.
-
-So far: 36 purchases, 50 metered trial minutes, 24 GameKeys minted, 19 agent
-decisions (13 buys, 5 passes, 1 held to the wire), 5 named studios, 2 named
-agents.
+**The chain is the only thing we believe.** Receipts from our own database never
+gate access: ownership is read from `GameKey`, balances from the vault.
 
 ---
 
 # Sponsors
 
-## Hedera
+## Circle and Arc
 
-**The short version:** three different things here are paid for with x402 on
-Hedera, and one of them is an AI agent paying for its own reasoning.
+**The short version:** the whole product is on Arc, and three different things
+are paid for with x402 USDC, one of them an AI agent paying for its own reasoning.
 
-**1. Buying a game** — `GET /games/:id/download`, the obvious one.
+**1. Buying a game**: `GET /api/games/:id/download`, settled by Circle's
+Facilitator straight into a vault.
 
-**2. The agent's own inference** — `GET /api/agent/verdict`. When the agent has
-to choose between games it cannot both afford, it pays per verdict out of its
-own wallet. Metered pay-per-call, not a subscription. The settlement
-transaction id is stored on the decision row, so you can click from "it chose
-this" to the transfer that paid for the thinking.
+**2. The agent's own inference**: `GET /api/agent/verdict`. When the agent has to
+choose between games it cannot both afford, it pays per verdict out of its own
+wallet. Metered pay-per-call, not a subscription. The settlement transaction id
+is stored on the decision row, so you can click from "it chose this" to the
+transfer that paid for the thinking.
 
-**3. A trial that meters itself** — `GET /games/:id/trial/chunks/settle`. A
-human's wallet is charged for one minute of play at a time, on a loop, and
-stops when they close the tab. Same rails, no agent involved.
+**3. A trial that meters itself**: `GET /api/games/:id/trial/chunks/settle`.
+A human's wallet is charged for one minute of play at a time through Gateway
+nanopayments, and stops when they close the tab.
 
-All three settle through **Blocky402**.
+**Arc-specific design, forced by the chain:**
+- Gas is USDC, so the first earnings of a developer who holds none are
+  unreachable by `claim()` alone. `claimFor` solves it without giving the payer
+  any say over the money.
+- The runtime blocklist reverts transfers to blocked addresses, so a push-payment
+  split would let one blocked payee stop everyone being paid. Claims are pull, so
+  each payee is isolated from the others.
+- Arc's public RPC caps `eth_getLogs` below 10,000 blocks, so ownership checks use
+  `GameKey`'s enumerable state rather than scanning logs.
+- Native USDC accounting is 18 decimals and the ERC-20 view is 6, so the vault
+  does its arithmetic on the native balance to avoid stranding fractions.
 
-**HTS on both sides of the trade.** You pay in USDC, an HTS token. You receive
-a GameKey, an HTS NFT created with a supply key and *nothing else* — no wipe
-key, no freeze key, no pause key, no admin key. We cannot take back what we
-sold, cannot change the token, cannot freeze your account. That is verifiable
-on HashScan in about ten seconds, which is why we built it that way instead of
-writing a promise in a README.
-
-**HCS is an input, not a log.** The agent's decisions come from reading the
-listings topic through the Mirror Node. Price history survives us. And
-**HCS-14** gives each agent an identity anchored on a topic that names the human
-funding it — implemented straight from the spec (SHA-384 over canonical JSON,
-Base58, six fields alphabetical) because the reference SDK never finished
-installing in our environment, and the AID spec explicitly allows offline
-derivation. Ten agents carry one.
-
-**Not claiming:** no A2A or ACP negotiation, no UCP manifest, and the recurring
-trial charge is a client loop over x402 rather than `ScheduleCreateTransaction`.
+**What a sale costs us**: Circle pays settlement, so about $0.007 in gas
+however many people are on the split. We take 5%, written into the vault.
 
 ## ENS
 
-**What a name does here.** Everywhere a person or an agent appears — a studio
-on a listing, a line on a revenue split, the buyer named in a sale notification
-— we show an ENS name instead of `0x71C7…3e4F`. One resolution order, ENS
-first, everywhere.
+**What a name does here.** Everywhere a person or an agent appears, a studio on a
+listing, a line on a revenue split, the buyer named in a sale notification, we
+show an ENS name instead of `0x71C7…3e4F`. One resolution order, ENS first,
+everywhere.
 
-**For an agent it matters more than that.** An autonomous buyer with a name is
-a participant in the market. The same wallet with a raw address is a script.
-`best-agent.cgs-sanctuary.eth` outbidding you for a game reads as a rival;
-`0x5325…8e1d` reads as a bug. Two exist today, each pointing at the **agent's
-own** Hedera account, not its owner's:
+**For an agent it matters more than that.** An autonomous buyer with a name is a
+participant in the market. The same wallet with a raw address is a script.
 
-| Name | Agent account |
-|---|---|
-| `suved.cgs-sanctuary.eth` | `0.0.10475095` |
-| `best-agent.cgs-sanctuary.eth` | `0.0.10475992` |
-
-And because the name lives on Sepolia rather than in our database, it keeps
-resolving whether or not CGS exists. Same argument the GameKey makes about
-ownership and the topic makes about price history.
-
-**An agent's name carries what it may spend.** Its spending ceiling is not a
-row in our database that you have to take our word for — it is a text record
-on its own name, and the agent reads it back before it buys:
+**An agent's name carries what it may spend.** Its per-purchase ceiling is not a
+row in our database that you have to take our word for. It is a text record on
+its own name, and the agent reads it back before it buys:
 
 ```
 best-agent.cgs-sanctuary.eth
-  addr           0x5FaEB2E6d9E25F3eBB959F7939EC5A33c6402477
+  addr           0x…                     the agent's Arc wallet
   cgs:role       agent
-  cgs:account    0.0.10475992
   cgs:maxSpend   1
   cgs:mode       autonomous
 ```
 
-`cgs:maxSpend` is a per-purchase ceiling, and it is enforced rather than
-advertised: whatever the plan says and whatever the model returned, nothing
-above the number published on chain gets bought. The total budget was always
-public — it is the balance of the agent's own account. What was missing was
-the rule.
+It is enforced rather than advertised: whatever the plan says and whatever the
+model returned, nothing above the number published on chain gets bought. The
+records are republished whenever the mandate changes, so a ceiling raised in the
+app is a ceiling raised on chain, and a failed republish stops the buy rather
+than spending past a stale number.
 
-The records are republished whenever the mandate changes, so a ceiling raised
-in the app is a ceiling raised on chain.
+**How it is built.** ENS's own `PermissionedRegistry` and `PermissionedResolver`,
+our own instances of both, deployed through ENS's `VerifiableFactory` as UUPS
+proxies we own, called directly with viem. The parent `cgs-sanctuary.eth` went
+through a real commit–reveal registration including the 60-second
+`MIN_COMMITMENT_AGE` wait. Permissions are ENS's role bitmaps, copied verbatim
+from `RegistryRolesLib.sol`.
 
-**How it is built.** ENS's own `PermissionedRegistry` *and* its
-`PermissionedResolver`, our own instances of both, deployed through ENS's
-`VerifiableFactory` as UUPS proxies we own, called directly with viem. The parent `cgs-sanctuary.eth` went through a real
-commit–reveal registration including the full 60-second `MIN_COMMITMENT_AGE`
-wait. Permissions are ENS's Enhanced Access Control role bitmaps, copied
-verbatim from `RegistryRolesLib.sol`. No custom registrar and no custom
-Solidity anywhere.
+A subname owner gets `ROLE_SET_RESOLVER | ROLE_RENEW`: enough to point their name
+where they like and keep it renewed, not enough to unregister it. An agent's
+subname gets `ROLE_RENEW` only and deliberately not `ROLE_SET_RESOLVER`, so the
+account being limited cannot repoint its name at a resolver stating a different
+number. Both facts are on each name's roles page.
 
-A subname owner gets `ROLE_SET_RESOLVER | ROLE_RENEW`: enough to point their
-name where they like and keep it renewed, not enough to unregister it or move
-it out from under the platform. Studios and agents share one flat namespace, so
-they compete for the same label and one availability check answers for both.
-Names are write-once — renaming would mint a second name and leave the first
-pointing at the same wallet.
-
-**Verify it without us.** These names live on the ENSv2 deployment ENS runs
-for ETHOnline, so ENS's own
+**Verify it without us.** The names live on the ENSv2 deployment ENS runs for
+ETHOnline, so ENS's own
 [explorer](https://hackathon-deployment-portal-app.ens-cf.workers.dev/best-agent.cgs-sanctuary.eth)
-reads them directly — our API is not in that path and nothing here asks you to
-trust it. We do expose `GET /api/studios/ens-resolve?name=…`, which answers
-from Sepolia on every call rather than from our database, but it is a
-convenience, not the evidence.
+reads them directly. Our API is not in that path.
 
-**The ceiling is one the agent cannot move.** An agent's subname is granted
-`ROLE_RENEW` and deliberately not `ROLE_SET_RESOLVER`, so the account being
-limited cannot repoint its name at a resolver stating a different number, and
-it holds no role on the resolver either. A studio name keeps
-`ROLE_SET_RESOLVER`, because a studio owns its identity and nothing
-enforceable hangs off its records. Both facts are on each name's roles page.
-
-**Honest about the edges:** we do not use wildcard resolution or record
-aliasing. Both are alternatives to what we built rather than additions to it —
-wildcard answers for subnames that nobody owns, and aliasing makes names share
-one record set, which is the opposite of an agent having its own ceiling.
+**Honest about the edges:** ENS is on Sepolia, not Arc, and testnet and mainnet
+share one namespace, so a name taken on one is taken on the other. We do not use
+wildcard resolution or record aliasing.
 
 ## Privy
 
-**What a player sees:** an email field. They type an address, click the link,
-and they have a wallet. No seed phrase, no extension, no "connect wallet"
-screen before they are even sure they want the game. Thirty seconds later they
-are playing something they bought.
+**What a player sees:** an email field. They type an address, click the link, and
+they have a wallet. No seed phrase, no extension, no "connect wallet" screen
+before they are even sure they want the game.
 
-**What a collaborator sees:** an email that says *"Tin Roof added you. You are
-on 40% of Deadzone. Your share is already set."* They click it, sign in, and
-every payment held for them since the game launched arrives at once — paid
-straight to their new EVM address, which under HIP-542 creates their Hedera
-account as a side effect of the payment itself. They never installed anything.
-That is the flow that makes splitting revenue with a jam team work at all.
+**What a collaborator sees:** an email that says *"Tin Roof added you. You are on
+40% of Deadzone. Your share is already set."* They sign in and claim. They never
+installed anything. That is the flow that makes splitting revenue with a jam
+team work at all.
 
-**The design decision worth the integration.** A Hedera transfer has to be
-built and frozen server-side and signed client-side. So the server freezes it,
-the **browser** signs the hashes with
-`provider.request({ method: 'secp256k1_sign' })` — the raw-hash primitive with
-no Ethereum message prefix, which is exactly what Hedera needs — and the server
-settles.
+**The design decision worth the integration.** A purchase is an EIP-712 typed-data
+signature over an EIP-3009 authorization, produced in the **browser** by the
+buyer's own embedded wallet with `eth_signTypedData_v4`. The server builds the
+terms and never holds a buyer's key. We did not ask buyers to grant a shop
+standing permission to move their money before their first purchase.
 
-The alternative was delegated signing: asking every buyer to grant a shop
-standing permission to move their money *before their first purchase*. That is
-a much larger thing to ask than "approve this purchase", so we did not ask it.
-**The server never holds a buyer's key.**
-
-**Two kinds of wallet, one clear line.** User-owned embedded wallets for
-buyers, which we cannot sign for. App-owned wallets from
+**Two kinds of wallet, one clear line.** User-owned embedded wallets for buyers,
+which we cannot sign for. App-owned wallets from
 `privy.wallets().create({ chain_type: 'ethereum' })` for autonomous agents,
-which we can — via `privy.wallets().rpc(id, { method: 'secp256k1_sign' })` —
-because we created them. That is how an agent buys a game and pays for its own
-reasoning at 3am with nobody watching.
+which we can sign for via `privy.wallets().rpc(...)` because we created them.
+That is how an agent buys a game and pays for its own reasoning at 3am with
+nobody watching.
 
 Auth is `verifyAccessToken` on every request, verified locally with no network
-hop.
+hop. Withdrawals go from the user's own wallet to any address they choose.
 
-**Honest gap:** we do not integrate Privy's funding or onramp. A buyer funds by
-receiving USDC from elsewhere, and it is the one place onboarding still feels
-like crypto.
+**Honest gap:** we do not integrate Privy's funding or onramp on mainnet. A buyer
+funds by sending USDC to their wallet address, and it is the one place
+onboarding still feels like crypto. Testnet has a faucet button.
 
 ---
 
 ## Where to look in the code
 
-`src/agent/watcher.ts` — the agent reading HCS and deciding.
-`src/services/hedera/hts.ts` — the GameKey, and the keys it deliberately lacks.
-`src/services/games/fulfil.ts` — the atomic split.
-`src/services/x402/` — the payment rails all three gated routes share.
+`src/agent/watcher.ts`: the agent reading `GameRegistry` events and deciding.
+`src/services/arc/`: the chain layer, vault, registry, keys, identity.
+`src/services/arc/x402/`: the payment rails all three gated routes share, and
+`trialRelay.ts`, which forwards trial money into vaults.
+`CGS-contracts/src/`: the four contracts, short enough to read in one sitting.
 
 ## What's not built
 
@@ -364,7 +351,8 @@ identity verification on upload, no adult content. Each cut deliberately.
 
 ## What's not done
 
-Not deployed — all of the above runs on testnet against live infrastructure,
-but there is no public URL yet. Privy's onramp is not integrated. Email needs
-an SPF record and a real `APP_URL`. No CSAM provider is wired, so uploads fail
-closed by design.
+Privy's onramp is not integrated, so mainnet users fund by sending USDC. No CSAM
+scanning provider is wired; uploads follow the server's configured mode. The
+contracts have not been independently audited, so mainnet prices are kept low.
+Trial revenue is briefly held by the operator before its relay, as described
+above. ENS stays on Sepolia.
