@@ -50,6 +50,11 @@ describes the Hedera build.
 
 ### Backend · CGS-server
 
+**Priyanshu: the mainnet deployment is yours to pick up, for real (handed over
+2026-10-14).** The client builds for mainnet and the ERC-8004 fix is in; what
+is left is all server and contracts. The checklist is the 2026-10-14 entry at
+the bottom of the Log.
+
 **Porting to Arc, stages 1–7 done plus Stage 8's local half (2026-10-03).**
 **Frontend: your punch list is `INTEGRATION.md` §19b** — all six items on it
 shipped and browser-tested by Suparno 2026-10-05. Payments, fulfilment,
@@ -95,6 +100,7 @@ Only things stopping work right now.
 
 | Who | Blocked on | Since | Needs |
 |---|---|---|---|
+| Priyanshu | **The mainnet deployment.** Handed over by Suparno; nothing on the frontend is waiting except a mainnet API URL | 2026-10-14 | Work the checklist in the 2026-10-14 entry: fresh operator key, contracts deployed to mainnet, mainnet env and Circle key, funded operator, cold payout address, rotated secrets, a CSAM provider, then a manual smoke test with tiny amounts. Tell Suparno the API URL, and the frontend deploys with `VITE_ARC_NETWORK=mainnet`. |
 | Priyanshu | No CSAM-scanning provider chosen | 2026-09-05 | A vendor decision — Cloudflare's CSAM Scanning Tool, PhotoDNA Cloud, Thorn Safer, or Hive Moderation. See `docs/stage-2.md` §2. |
 | Both | The operator holds ~$12 of testnet USDC | 2026-09-06 | Top-ups from faucet.circle.com to the **Arc** operator, `0x296c7608662B0D1feF5e205D042ab87E623043C0`. The Hedera account id this row used to name is dead. It pays gas for every publish, mint, vault deploy and claim **and** is what the dev faucet sends test wallets 5 USDC from, so browser testing drains it from both ends. Gas is the cheap half: a publish is ~0.023 USDC, a mint ~0.0044. |
 | Both | Email only reaches one address, and what does arrive lands in spam | 2026-09-07 | A verified domain. Without one Resend sends from `onboarding@resend.dev` and delivers **only to the address the Resend account was registered with** — so an invite to a teammate is refused and logged, not delivered. A domain is being bought; once its DNS records are in, `RESEND_FROM` changes and nothing else does. Two more things go with it and neither is code: an **SPF TXT record** on the domain at the registrar, and a real reachable HTTPS host for **`APP_URL`**, without which every link in every email points somewhere that does not answer. |
@@ -145,6 +151,7 @@ Cross-repo only. Decisions internal to one repo live in that repo's `CLAUDE.md`.
 | Agent + buyer payment signing | One shared function, `payForGame()` | Both consume our own x402 route as a real client would; the agent uses its own wallet, a logged-in buyer's `/pay` call uses theirs. Same code path on purpose. |
 | Privy wallet public key | Derived from a real signature, not read from the API | `Wallet.public_key` is empty in practice on both `create()` and `get()`, despite the type marking it optional. A `secp256k1_sign` response carries a recovery byte, which makes the key recoverable from one real signature. Verified across four trials. |
 | ENS subregistry ownership | Platform deploys and owns one subregistry; studios get a scoped role bitmap on their own subname, not their own registry | Studios can point their own name and renew it; they can't unregister or transfer it away from platform control. Same shape as GameKey treasury staying with the operator. |
+| ENS when payments move to mainnet | **Stays on Sepolia**, decided 2026-10-14 (Suparno) | ENSv2, which studio and agent names are built on, is only on Sepolia as far as we know, and the names are identity, not money. Worth knowing what it implies: the agent's published spending ceiling is then a Sepolia record bounding real mainnet money. |
 | ENSv2 Sepolia contract addresses | Sourced from docs.ens.domains, cross-checked against a pinned repo commit's interfaces | The two disagreed on addresses (a stale redeploy the repo commit never caught up to); confirmed which was live with a real `isAvailable`/`getRegisterPrice` call rather than trusting either source blind. See `docs/stage-7.md` §1. |
 | Moderation review, who triggers `removed_from_storage` | A CLI script (`scripts/resolve-report.ts`), not an admin route | No admin auth model exists anywhere in this codebase and neither doc describes one. A two-person team reviewing a handful of reports is the same shape as `splits:retry` — an operator runs a script after looking at something, no new infrastructure invented for it. |
 | Likes, comments, playtime | Built after all, reversing the original "deliberately not building" cut | That cut was made under time uncertainty; time stopped being the constraint, so the cut no longer applies. `plays`/`likeCount` are computed live from real rows, not a stored counter — see `docs/stage-9.md`. |
@@ -2955,3 +2962,71 @@ response that already worked. Worth one pass in the browser.
 
 **Needs from you:** one click-through of Take-back on `/money`, ideally from
 a wallet holding no USDC, which is the case this exists for.
+
+### 2026-10-14 · Both · Suparno
+
+Checked what mainnet needs against Arc mainnet itself (chain `5042`, live),
+not the docs. USDC, Multicall3, Gateway wallet and Gateway minter are all at
+the addresses the server already uses, and `MAX_LOG_SPAN` fits the public
+RPC's 10,000-block `eth_getLogs` limit. Three things would have broken.
+
+**Shipped (backend, small, in your repo, committed on `main`): the ERC-8004
+registry is per network now.** `ARC_IDENTITY_REGISTRY` defaulted
+to `0x8004A818…BD9e`, commented as the same on testnet and mainnet. It is not.
+Mainnet's is `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`, and neither address
+has any code on the other network, so every mainnet agent registration would
+have gone to an empty address. Both are proxies over the identical
+implementation (`0x7274…9c02`, version 2.0.0, same bytecode hash), so the ABI
+carries over and only the address changes.
+`services/arc/client.ts#identityRegistryAddress` picks it from `ARC_NETWORK`;
+the env var is now an optional override with no default.
+`arc-agent-buy-check.ts` printed `env.ARC_IDENTITY_REGISTRY` and a hardcoded
+testnet explorer, so it goes through the resolver and `explorerUrl()` now.
+`tsc` is clean.
+
+**Shipped (frontend):** `VITE_ARC_NETWORK` (testnet unless set) picks the one
+chain Privy's wallet may use; my 5 Oct fix had pinned it to testnet. On
+mainnet the dev faucet is gone and "Add funds" is the wallet address, polled
+until the money lands. The old line under that button, "Card or bank, handled
+by our payments partner", was never true.
+
+**On card purchases, since it will come up:** MoonPay went live on Arc this
+month. Privy's `useFundWallet` cannot use it: its MoonPay mapping (checked in
+`@privy-io/js-sdk-core` up to 0.78.3) has no Arc entry and **falls back to
+Ethereum mainnet** with a console warning. Wiring it today would sell people
+USDC on the wrong chain. Options are Privy's newer `useDepositFunds` if Arc
+shows up as a destination in the dashboard, or MoonPay directly as a partner.
+
+**Changes the contract:** nothing in the API. One deploy rule: the client's
+`VITE_ARC_NETWORK` must equal the server's `ARC_NETWORK`. A mismatch is
+refused in the browser before any transaction is sent.
+
+**Decided:** ENS stays on Sepolia (Decisions table).
+
+**Mainnet, what is left, all on your side.** Collected here so nothing is
+missed; your Stage 9 plan may already cover it, and it lives in your docs, not
+on my machine.
+
+- A **fresh operator key**, never used on testnet. It deploys `CGS-contracts`
+  and is locked in as operator and minter, so it stays the server's key for
+  good. Then the three contract addresses into the env.
+- A separate **cold `ARC_PLATFORM_PAYOUT`**, so the 5% does not pile up on a
+  hot key.
+- **Rotate every secret.** They have been pasted between machines and into a
+  Downloads text file.
+- `ARC_NETWORK=mainnet`, `ARC_RPC_URL=https://rpc.mainnet.arc.io` (a paid
+  provider as a comma-separated fallback is worth having), a **mainnet
+  `CIRCLE_API_KEY`**, the operator funded with real USDC, a separate database.
+- **Circle's mainnet fees are unverified.** Testnet charges nothing for
+  settlement; check before pricing anything at $0.10.
+- **CSAM.** `skip` is not an option on a public site taking real money, and
+  `block` turns uploads off. Still the blocker it has been since 5 Sep.
+- **Every `arc:check*` script and `npm run fund` refuse mainnet**, so the first
+  pass is manual with tiny amounts: publish, buy, claim, withdraw, a trial,
+  Gateway take-back, the agent.
+
+**Needs from you: please take the mainnet deployment from here, for real.**
+It is in Blockers under your name. Work the list above (and Stage 9 where it
+says more), deploy, run the manual pass, and send me the mainnet API URL; the
+frontend then deploys with `VITE_ARC_NETWORK=mainnet` and nothing else. Also a
+look at the registry change, which is committed on `main` in CGS-server.
