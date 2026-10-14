@@ -485,15 +485,25 @@ hide money from exactly the people the splits feature exists for.
 ```json
 { "totals": { "earned": {"units":12000,"display":0.012,"assetDecimals":6},
               "gross": {...}, "sales": 2, "games": 1,
-              "claimable": {...}, "claimed": {...}, "asset": "0x3600…0000" },
+              "claimable": {...}, "claimed": {...}, "pending": {...},
+              "asset": "0x3600…0000" },
   "games": [ { "gameId":"…", "slug":"…", "title":"…", "status":"published",
                "studio": {...}, "sales": 2, "gross": {...},
-               "yours": { "pct": 60, "role": "code", "earned": {...} },
+               "yours": { "pct": 60, "role": "code", "earned": {...}, "pending": {...} },
                "plays": 8, "likes": 3, "reviews": 1, "rating": 5 } ],
   "claims": [ { "gameId":"…", "gameTitle":"…", "gameSlug":"…",
                 "vault": "0x…", "bps": 4750,
                 "earned": {...}, "claimed": {...}, "claimable": {...} } ] }
 ```
+
+**`pending`, added 2026-10-14: earned, but not in the vault yet.** Only trial
+chunks are ever pending. Gateway credits a chunk instantly and Circle moves the
+money later in a batch (minutes, occasionally a quarter of an hour), and the
+server then forwards it into the game's vault on its own. `yours.earned` already
+includes it, so a developer is never shown `0` for money they made; `pending` is
+the part of that which is not claimable yet, and `claimable` is only ever what the
+vault really holds. Purchases are never pending. Optional on the wire so an older
+server still parses. Show it as "$X on its way", not as a second earnings figure.
 
 **`held` and `failed` are gone, and so is the idea behind them.** There used to be
 three states a share could be in — paid, held because the person had no account

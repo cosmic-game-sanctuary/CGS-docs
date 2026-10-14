@@ -3030,3 +3030,67 @@ It is in Blockers under your name. Work the list above (and Stage 9 where it
 says more), deploy, run the manual pass, and send me the mainnet API URL; the
 frontend then deploys with `VITE_ARC_NETWORK=mainnet` and nothing else. Also a
 look at the registry change, which is committed on `main` in CGS-server.
+
+### 2026-10-14 (night) · Backend · Priyanshu
+
+Found three real bugs on the deployed testnet stack and fixed them. All three
+were invisible to the check scripts for the same reason: they tested the happy
+path in the order a script naturally runs, not the order a person does things.
+
+**1. The agent bought nothing against two live sales (the headline feature).**
+Wants saved *after* the agent registered, a moment apart, one raised after the
+last on-chain publish. Two causes. `publishAgentMandate` dropped a call that
+overlapped a running one, so the chain kept the first want's ceiling. And at the
+wire, a purchase above a stale ceiling was "republish, decide next round", but a
+round only follows a price event or a scheduled wire, a passed wire is never
+scheduled again, and with nothing bought the round wrote **no decision row**: the
+agent went silently idle until the sale ended. Now: publishes coalesce, the
+republish is awaited and the buy happens in the same round, and a purchase that
+fails sets a 20-second retry alarm (max 3 per game). `arc:check:agent:late-wants`
+reproduces your exact scenario and passes (both games bought at the wire).
+
+**2. Trial revenue never reached the vault.** Gateway pays a seller by crediting
+a balance *inside Gateway*, and only that address's own key can withdraw it. A
+vault has no key. Measured: 3.01 USDC of completed trial transfers, the vault's
+balance 0, the same 3.01 under the vault's address in Circle's balance API.
+Purchases were unaffected (they transfer straight into the vault). Trial chunks
+now pay the operator and an automatic 2-minute relay forwards each game's
+*completed* chunks into its vault as one same-chain withdrawal, topping up its own
+Gateway float when short. **Trade-off to know about:** for the minutes between a
+chunk and its relay, trial money is held by the operator. Every relay is a public
+transaction naming the vault as recipient. Chunks bought before this fix are
+marked failed and are not recoverable.
+
+**3. Earnings showed 0 per game for trial money.** The total counted our sales
+rows; each game's figure was then overwritten with the vault's number, which was
+0. Per-game earned now includes money on its way, and there is a separate
+`pending` (INTEGRATION.md, personal earnings). `claimable` is still only what
+the vault really holds.
+
+**4. A contested round could leave the losing game with no record.** The agent
+only wrote a "declined" row for games the *model* named as declined. When Groq
+bought one of two games and simply did not mention the other, the buyer saw a
+purchase and no explanation for the game they also wanted (it passed on the
+earlier run only because the model happened to list it). A game at its wire that
+was neither bought nor named is now recorded as declined too.
+
+**Proven this session, on the real chain, against an isolated local Postgres**
+(not the Render DB: check scripts leave fixture rows and judges browse that one):
+`arc:check:agent:late-wants` 8/8, `arc:check:trial-relay` 14/14 (waits for a real
+Circle batch, asserts the vault's balance), `arc:check:faucet` 6/6, and a full
+rerun of `purchase`, `publish`, `listener`, `identity`, `agent` and `contested`
+(24/24), plus the contract suite (51/51).
+
+**Changes the contract (additive):** `GET /api/me/earnings` gains optional
+`totals.pending` and `games[].yours.pending`. I made the matching small client
+change myself: `/money` shows "$X on its way" under a game's figure and in the
+Earned note. Build and lint are clean; nothing existing was removed.
+
+**Also new, for judges:** `TESTNET_FAUCET=on` mounts the same
+`POST /api/dev/faucet` the client already calls, but capped: it only tops a wallet
+up to 10 USDC, keeps 5 in the operator for gas, has a cooldown, and the server
+refuses to boot with it on while `ARC_NETWORK=mainnet`. Testnet deploy only.
+
+**Needs from you:** nothing blocking. A second pair of eyes on
+`services/arc/x402/trialRelay.ts` would be worth it before mainnet, since it
+signs withdrawals from the operator.
